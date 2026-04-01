@@ -1,12 +1,14 @@
 import { Belt } from "../entities/Belt";
 import { isConveyorNode } from "../entities/Conveyor";
+import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
-import { Machine } from "../entities/Machine";
+import { TestProducer, type Machine } from "../entities/Machine";
 import { Router } from "../entities/Router";
 import { Grid } from "../grid/Grid";
+import type { ResourceDeposit } from "../grid/Tile";
 import type { Direction, GridPosition } from "./types";
 import { DIRECTION_TO_GRID_OFFSET, oppositeDirection } from "./types";
-import type { ItemId } from "../data/items";
+import type { ItemId, ResourceItemId } from "../data/items";
 
 export class World {
   readonly grid: Grid;
@@ -15,6 +17,7 @@ export class World {
 
   constructor(width: number, height: number) {
     this.grid = new Grid(width, height);
+    this.generateResourcePatches();
   }
 
   get width(): number {
@@ -32,6 +35,20 @@ export class World {
 
   getTile(x: number, y: number) {
     return this.grid.get(x, y);
+  }
+
+  mineResourceAt(x: number, y: number, amount = 1): ResourceItemId | null {
+    const tile = this.grid.get(x, y);
+    if (!tile || !tile.resource || amount <= 0) {
+      return null;
+    }
+
+    const resourceType = tile.resource.type;
+    tile.resource.amount = Math.max(0, tile.resource.amount - amount);
+    if (tile.resource.amount === 0) {
+      tile.resource = null;
+    }
+    return resourceType;
   }
 
   getNeighborPosition(x: number, y: number, direction: Direction): GridPosition | null {
@@ -80,9 +97,20 @@ export class World {
       return null;
     }
 
-    const machine = new Machine(outputItem, direction);
+    const machine = new TestProducer(outputItem, direction);
     tile.building = machine;
     return machine;
+  }
+
+  placeFurnace(x: number, y: number, direction: Direction): Furnace | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    const furnace = new Furnace(direction);
+    tile.building = furnace;
+    return furnace;
   }
 
   clearBuilding(x: number, y: number): void {
@@ -146,5 +174,127 @@ export class World {
     }
 
     this.placeRouter(Math.min(straightEndX, startX + 7), row, "right");
+  }
+
+  private generateResourcePatches(): void {
+    const area = this.width * this.height;
+    const rng = this.createRng((this.width * 73856093) ^ (this.height * 19349663));
+
+    const configs: Array<{
+      type: ResourceItemId;
+      patches: number;
+      minRadius: number;
+      maxRadius: number;
+      minAmount: number;
+      maxAmount: number;
+    }> = [
+      {
+        type: "stone",
+        patches: Math.max(10, Math.floor(area / 2400)),
+        minRadius: 3,
+        maxRadius: 8,
+        minAmount: 10,
+        maxAmount: 34,
+      },
+      {
+        type: "iron_ore",
+        patches: Math.max(14, Math.floor(area / 1800)),
+        minRadius: 4,
+        maxRadius: 10,
+        minAmount: 14,
+        maxAmount: 44,
+      },
+      {
+        type: "coal_ore",
+        patches: Math.max(10, Math.floor(area / 2200)),
+        minRadius: 3,
+        maxRadius: 9,
+        minAmount: 12,
+        maxAmount: 40,
+      },
+    ];
+
+    for (const config of configs) {
+      for (let i = 0; i < config.patches; i += 1) {
+        const centerX = Math.floor(rng() * this.width);
+        const centerY = Math.floor(rng() * this.height);
+        const radius = config.minRadius + rng() * (config.maxRadius - config.minRadius);
+
+        this.applyResourcePatch(centerX, centerY, radius, config.type, config.minAmount, config.maxAmount, rng);
+      }
+    }
+
+    for (const config of configs) {
+      if (!this.hasResourceType(config.type)) {
+        const x = Math.floor(rng() * this.width);
+        const y = Math.floor(rng() * this.height);
+        this.applyResourcePatch(x, y, config.minRadius + 1, config.type, config.minAmount, config.maxAmount, rng);
+      }
+    }
+
+    const centerX = Math.floor(this.width / 2);
+    const centerY = Math.floor(this.height / 2);
+    this.applyResourcePatch(centerX - 6, centerY + 2, 4, "stone", 12, 30, rng);
+    this.applyResourcePatch(centerX + 4, centerY - 3, 4.5, "iron_ore", 14, 36, rng);
+    this.applyResourcePatch(centerX + 8, centerY + 4, 4, "coal_ore", 12, 34, rng);
+  }
+
+  private applyResourcePatch(
+    centerX: number,
+    centerY: number,
+    radius: number,
+    type: ResourceItemId,
+    minAmount: number,
+    maxAmount: number,
+    rng: () => number
+  ): void {
+    const r = Math.ceil(radius);
+
+    for (let y = centerY - r; y <= centerY + r; y += 1) {
+      for (let x = centerX - r; x <= centerX + r; x += 1) {
+        const tile = this.grid.get(x, y);
+        if (!tile) {
+          continue;
+        }
+
+        const jitterX = (rng() - 0.5) * 0.6;
+        const jitterY = (rng() - 0.5) * 0.6;
+        const distance = Math.hypot(x + jitterX - centerX, y + jitterY - centerY);
+        const threshold = radius * (0.82 + rng() * 0.25);
+        if (distance > threshold) {
+          continue;
+        }
+
+        const richness = 1 - Math.min(1, distance / Math.max(radius, 0.001));
+        const amount = Math.max(2, Math.round(minAmount + (maxAmount - minAmount) * richness + rng() * 4));
+        const deposit: ResourceDeposit = {
+          type,
+          amount,
+          maxAmount: amount,
+        };
+
+        if (!tile.resource || deposit.amount > tile.resource.amount) {
+          tile.resource = deposit;
+        }
+      }
+    }
+  }
+
+  private hasResourceType(type: ResourceItemId): boolean {
+    let found = false;
+    this.grid.forEach((tile) => {
+      if (!found && tile.resource?.type === type) {
+        found = true;
+      }
+    });
+    return found;
+  }
+
+  private createRng(seed: number): () => number {
+    let state = (seed >>> 0) || 1;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
   }
 }

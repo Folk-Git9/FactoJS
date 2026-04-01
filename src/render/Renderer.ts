@@ -1,10 +1,25 @@
 import * as THREE from "three";
 import { DIRECTION_TO_WORLD_OFFSET, oppositeDirection, type GridPosition } from "../core/types";
 import { World } from "../core/World";
+import { RESOURCE_ITEM_IDS, type ResourceItemId } from "../data/items";
 import { isConveyorNode } from "../entities/Conveyor";
-import { Machine } from "../entities/Machine";
+import { isDirectionalMachine } from "../entities/Machine";
+import { Player } from "../entities/Player";
 import { CameraController } from "./Camera";
+import { InstancedBatch } from "./Instancing";
 import { MeshFactory } from "./MeshFactory";
+
+interface VisibleGridBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+interface ResourceBatch {
+  outline: InstancedBatch;
+  core: InstancedBatch;
+}
 
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
@@ -14,18 +29,24 @@ export class Renderer {
   private readonly cameraController: CameraController;
 
   private readonly staticLayer = new THREE.Group();
+  private readonly resourceLayer = new THREE.Group();
   private readonly buildingLayer = new THREE.Group();
   private readonly itemLayer = new THREE.Group();
+  private readonly playerLayer = new THREE.Group();
 
+  private readonly resourceBatches = new Map<ResourceItemId, ResourceBatch>();
+  private resourceBatchCapacity = 0;
   private readonly buildingNodes = new Map<string, THREE.Object3D>();
   private readonly buildingKinds = new Map<string, "belt" | "router" | "machine">();
   private readonly itemNodes = new Map<string, THREE.Mesh>();
   private readonly itemTypes = new Map<string, string>();
+  private playerNode: THREE.Object3D | null = null;
 
   private readonly world: World;
-  private isMiddlePanning = false;
-  private lastPanClientX = 0;
-  private lastPanClientY = 0;
+  private readonly matrixPosition = new THREE.Vector3();
+  private readonly matrixScale = new THREE.Vector3(1, 1, 1);
+  private readonly matrixQuaternion = new THREE.Quaternion();
+  private readonly matrix = new THREE.Matrix4();
 
   private readonly onWheel = (event: WheelEvent): void => {
     event.preventDefault();
@@ -33,55 +54,14 @@ export class Renderer {
     this.cameraController.zoomBy(zoomFactor);
   };
 
-  private readonly onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 1) {
-      return;
-    }
-    event.preventDefault();
-    this.isMiddlePanning = true;
-    this.lastPanClientX = event.clientX;
-    this.lastPanClientY = event.clientY;
-    this.canvas.setPointerCapture(event.pointerId);
-  };
-
-  private readonly onPointerMove = (event: PointerEvent): void => {
-    if (!this.isMiddlePanning) {
-      return;
-    }
-    event.preventDefault();
-
-    const rect = this.canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return;
-    }
-
-    const dxPixels = event.clientX - this.lastPanClientX;
-    const dyPixels = event.clientY - this.lastPanClientY;
-    this.lastPanClientX = event.clientX;
-    this.lastPanClientY = event.clientY;
-
-    const worldPerPixelX = this.cameraController.getVisibleWorldWidth() / rect.width;
-    const worldPerPixelY = this.cameraController.getVisibleWorldHeight() / rect.height;
-    this.cameraController.moveBy(-dxPixels * worldPerPixelX, dyPixels * worldPerPixelY);
-  };
-
-  private readonly onPointerUp = (event: PointerEvent): void => {
-    if (event.button !== 1) {
-      return;
-    }
-    this.isMiddlePanning = false;
-    if (this.canvas.hasPointerCapture(event.pointerId)) {
-      this.canvas.releasePointerCapture(event.pointerId);
-    }
-  };
-
   constructor(host: HTMLElement, world: World, initialViewHeight = 20) {
     this.world = world;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x161b22);
-    this.scene.add(this.staticLayer, this.buildingLayer, this.itemLayer);
+    this.scene.add(this.staticLayer, this.resourceLayer, this.buildingLayer, this.itemLayer, this.playerLayer);
     this.staticLayer.add(MeshFactory.createGrid(world.width, world.height));
+    this.rebuildResourceBatches(256);
 
     this.cameraController = new CameraController(world.width, world.height, initialViewHeight);
 
@@ -91,10 +71,6 @@ export class Renderer {
     host.appendChild(this.canvas);
 
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
-    this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
   }
 
   resize(width: number, height: number): void {
@@ -102,24 +78,19 @@ export class Renderer {
     this.cameraController.resize(width, height);
   }
 
-  render(world: World): void {
-    this.syncBuildings(world);
-    this.syncItems(world);
+  render(world: World, player?: Player): void {
+    const visibleBounds = this.getVisibleGridBounds(1);
+    this.syncResources(world, visibleBounds);
+    this.syncBuildings(world, visibleBounds);
+    this.syncItems(world, visibleBounds);
+    this.syncPlayer(player);
     this.webgl.render(this.scene, this.cameraController.camera);
   }
 
   dispose(): void {
     this.canvas.removeEventListener("wheel", this.onWheel);
-    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    this.canvas.removeEventListener("pointermove", this.onPointerMove);
-    this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.webgl.dispose();
     this.canvas.remove();
-  }
-
-  panCamera(dx: number, dy: number): void {
-    this.cameraController.moveBy(dx, dy);
   }
 
   zoomCamera(multiplier: number): void {
@@ -128,6 +99,10 @@ export class Renderer {
 
   getCameraZoom(): number {
     return this.cameraController.getZoom();
+  }
+
+  centerCameraOn(x: number, y: number): void {
+    this.cameraController.setCenter(x, y);
   }
 
   screenToGrid(clientX: number, clientY: number): GridPosition | null {
@@ -149,55 +124,101 @@ export class Renderer {
     return { x: gridX, y: gridY };
   }
 
-  private syncBuildings(world: World): void {
-    const seenKeys = new Set<string>();
+  private syncResources(world: World, bounds: VisibleGridBounds): void {
+    const visibleTileCount = this.visibleTileCount(bounds);
+    this.ensureResourceBatchCapacity(visibleTileCount);
 
-    world.grid.forEach((tile, x, y) => {
-      if (!tile.building) {
-        return;
-      }
+    for (const batch of this.resourceBatches.values()) {
+      batch.outline.reset();
+      batch.core.reset();
+    }
 
-      const key = this.makeKey(x, y);
-      seenKeys.add(key);
-
-      const requiredKind = tile.building instanceof Machine ? "machine" : tile.building.kind;
-      const currentNode = this.buildingNodes.get(key);
-      const currentKind = this.buildingKinds.get(key);
-
-      if (!currentNode || currentKind !== requiredKind) {
-        if (currentNode) {
-          this.buildingLayer.remove(currentNode);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const tile = world.getTile(x, y);
+        const resource = tile?.resource;
+        if (!resource || resource.amount <= 0) {
+          continue;
         }
 
-        const created = tile.building instanceof Machine
-          ? MeshFactory.createMachine(tile.building.outputDirection)
-          : tile.building.kind === "router"
-            ? MeshFactory.createRouter(tile.building.direction)
-            : MeshFactory.createBelt(tile.building.direction);
+        const batch = this.resourceBatches.get(resource.type);
+        if (!batch) {
+          continue;
+        }
 
-        this.buildingNodes.set(key, created);
-        this.buildingKinds.set(key, requiredKind);
-        this.buildingLayer.add(created);
-      }
+        const worldPosition = this.gridToWorld(x, y);
+        const richness = resource.maxAmount > 0 ? resource.amount / resource.maxAmount : 0;
+        const scale = THREE.MathUtils.lerp(0.34, 1, Math.min(Math.max(richness, 0), 1));
 
-      const node = this.buildingNodes.get(key);
-      if (!node) {
-        return;
-      }
+        this.matrixPosition.set(worldPosition.x, worldPosition.y, -0.01);
+        this.matrixScale.set(scale, scale, 1);
+        this.matrix.compose(this.matrixPosition, this.matrixQuaternion, this.matrixScale);
+        batch.outline.push(this.matrix);
 
-      const worldPosition = this.gridToWorld(x, y);
-      node.position.set(worldPosition.x, worldPosition.y, 0);
+        this.matrixPosition.set(worldPosition.x, worldPosition.y, -0.008);
+        this.matrix.compose(this.matrixPosition, this.matrixQuaternion, this.matrixScale);
+        batch.core.push(this.matrix);
+      }
+    }
 
-      if (isConveyorNode(tile.building) && tile.building.kind === "belt") {
-        MeshFactory.setBeltDirection(node, tile.building.direction);
+    for (const batch of this.resourceBatches.values()) {
+      batch.outline.commit();
+      batch.core.commit();
+    }
+  }
+
+  private syncBuildings(world: World, bounds: VisibleGridBounds): void {
+    const seenKeys = new Set<string>();
+
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const tile = world.getTile(x, y);
+        if (!tile?.building) {
+          continue;
+        }
+
+        const key = this.makeKey(x, y);
+        seenKeys.add(key);
+
+        const requiredKind = tile.building.kind;
+        const currentNode = this.buildingNodes.get(key);
+        const currentKind = this.buildingKinds.get(key);
+
+        if (!currentNode || currentKind !== requiredKind) {
+          if (currentNode) {
+            this.buildingLayer.remove(currentNode);
+          }
+
+          const created = requiredKind === "machine"
+            ? MeshFactory.createMachine(isDirectionalMachine(tile.building) ? tile.building.outputDirection : "right")
+            : requiredKind === "router"
+              ? MeshFactory.createRouter(tile.building.direction)
+              : MeshFactory.createBelt(tile.building.direction);
+
+          this.buildingNodes.set(key, created);
+          this.buildingKinds.set(key, requiredKind);
+          this.buildingLayer.add(created);
+        }
+
+        const node = this.buildingNodes.get(key);
+        if (!node) {
+          continue;
+        }
+
+        const worldPosition = this.gridToWorld(x, y);
+        node.position.set(worldPosition.x, worldPosition.y, 0);
+
+        if (isConveyorNode(tile.building) && tile.building.kind === "belt") {
+          MeshFactory.setBeltDirection(node, tile.building.direction);
+        }
+        if (isConveyorNode(tile.building) && tile.building.kind === "router") {
+          MeshFactory.setRouterDirection(node, tile.building.direction);
+        }
+        if (tile.building.kind === "machine" && isDirectionalMachine(tile.building)) {
+          MeshFactory.setMachineDirection(node, tile.building.outputDirection);
+        }
       }
-      if (isConveyorNode(tile.building) && tile.building.kind === "router") {
-        MeshFactory.setRouterDirection(node, tile.building.direction);
-      }
-      if (tile.building instanceof Machine) {
-        MeshFactory.setMachineDirection(node, tile.building.outputDirection);
-      }
-    });
+    }
 
     for (const [key, node] of this.buildingNodes.entries()) {
       if (!seenKeys.has(key)) {
@@ -208,50 +229,53 @@ export class Renderer {
     }
   }
 
-  private syncItems(world: World): void {
+  private syncItems(world: World, bounds: VisibleGridBounds): void {
     const seenUids = new Set<string>();
 
-    world.grid.forEach((tile, x, y) => {
-      if (!isConveyorNode(tile.building) || !tile.building.item) {
-        return;
-      }
-
-      const conveyor = tile.building;
-      if (!conveyor.item) {
-        return;
-      }
-      const item = conveyor.item;
-      const uid = item.uid;
-      seenUids.add(uid);
-
-      let mesh = this.itemNodes.get(uid);
-      const knownType = this.itemTypes.get(uid);
-      if (!mesh || knownType !== item.type) {
-        if (mesh) {
-          this.itemLayer.remove(mesh);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const tile = world.getTile(x, y);
+        if (!tile || !isConveyorNode(tile.building) || !tile.building.item) {
+          continue;
         }
-        mesh = MeshFactory.createItem(item.type);
-        this.itemNodes.set(uid, mesh);
-        this.itemTypes.set(uid, item.type);
-        this.itemLayer.add(mesh);
+
+        const conveyor = tile.building;
+        const item = conveyor.item;
+        if (!item) {
+          continue;
+        }
+        const uid = item.uid;
+        seenUids.add(uid);
+
+        let mesh = this.itemNodes.get(uid);
+        const knownType = this.itemTypes.get(uid);
+        if (!mesh || knownType !== item.type) {
+          if (mesh) {
+            this.itemLayer.remove(mesh);
+          }
+          mesh = MeshFactory.createItem(item.type);
+          this.itemNodes.set(uid, mesh);
+          this.itemTypes.set(uid, item.type);
+          this.itemLayer.add(mesh);
+        }
+
+        const base = this.gridToWorld(x, y);
+        const progress = Math.min(Math.max(conveyor.progress, 0), 1);
+        const entryOffset = DIRECTION_TO_WORLD_OFFSET[conveyor.entryDirection ?? oppositeDirection(conveyor.direction)];
+        const exitOffset = DIRECTION_TO_WORLD_OFFSET[conveyor.direction];
+
+        const startX = -entryOffset.x * 0.5;
+        const startY = -entryOffset.y * 0.5;
+        const endX = exitOffset.x * 0.5;
+        const endY = exitOffset.y * 0.5;
+
+        mesh.position.set(
+          base.x + THREE.MathUtils.lerp(startX, endX, progress),
+          base.y + THREE.MathUtils.lerp(startY, endY, progress),
+          0.05
+        );
       }
-
-      const base = this.gridToWorld(x, y);
-      const progress = Math.min(Math.max(conveyor.progress, 0), 1);
-      const entryOffset = DIRECTION_TO_WORLD_OFFSET[conveyor.entryDirection ?? oppositeDirection(conveyor.direction)];
-      const exitOffset = DIRECTION_TO_WORLD_OFFSET[conveyor.direction];
-
-      const startX = -entryOffset.x * 0.5;
-      const startY = -entryOffset.y * 0.5;
-      const endX = exitOffset.x * 0.5;
-      const endY = exitOffset.y * 0.5;
-
-      mesh.position.set(
-        base.x + THREE.MathUtils.lerp(startX, endX, progress),
-        base.y + THREE.MathUtils.lerp(startY, endY, progress),
-        0.05
-      );
-    });
+    }
 
     for (const [uid, mesh] of this.itemNodes.entries()) {
       if (!seenUids.has(uid)) {
@@ -260,6 +284,23 @@ export class Renderer {
         this.itemTypes.delete(uid);
       }
     }
+  }
+
+  private syncPlayer(player: Player | undefined): void {
+    if (!player) {
+      if (this.playerNode) {
+        this.playerLayer.remove(this.playerNode);
+        this.playerNode = null;
+      }
+      return;
+    }
+
+    if (!this.playerNode) {
+      this.playerNode = MeshFactory.createPlayer();
+      this.playerLayer.add(this.playerNode);
+    }
+
+    this.playerNode.position.set(player.x, player.y, 0.09);
   }
 
   private gridToWorld(x: number, y: number): { x: number; y: number } {
@@ -271,5 +312,71 @@ export class Renderer {
 
   private makeKey(x: number, y: number): string {
     return `${x}:${y}`;
+  }
+
+  private visibleTileCount(bounds: VisibleGridBounds): number {
+    const width = Math.max(0, bounds.maxX - bounds.minX + 1);
+    const height = Math.max(0, bounds.maxY - bounds.minY + 1);
+    return Math.max(1, width * height);
+  }
+
+  private ensureResourceBatchCapacity(requiredCount: number): void {
+    if (requiredCount <= this.resourceBatchCapacity) {
+      return;
+    }
+
+    let nextCapacity = Math.max(256, this.resourceBatchCapacity);
+    while (nextCapacity < requiredCount) {
+      nextCapacity *= 2;
+    }
+    this.rebuildResourceBatches(nextCapacity);
+  }
+
+  private rebuildResourceBatches(capacity: number): void {
+    for (const batch of this.resourceBatches.values()) {
+      this.resourceLayer.remove(batch.outline.mesh, batch.core.mesh);
+    }
+    this.resourceBatches.clear();
+
+    for (const resourceType of RESOURCE_ITEM_IDS) {
+      const outlineMesh = MeshFactory.createResourceOutlineInstanced(capacity);
+      outlineMesh.frustumCulled = false;
+      outlineMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      const coreMesh = MeshFactory.createResourceCoreInstanced(resourceType, capacity);
+      coreMesh.frustumCulled = false;
+      coreMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      this.resourceLayer.add(outlineMesh, coreMesh);
+      this.resourceBatches.set(resourceType, {
+        outline: new InstancedBatch(outlineMesh),
+        core: new InstancedBatch(coreMesh),
+      });
+    }
+
+    this.resourceBatchCapacity = capacity;
+  }
+
+  private getVisibleGridBounds(marginTiles = 0): VisibleGridBounds {
+    const camera = this.cameraController.camera;
+    const halfVisibleWidth = (camera.right - camera.left) * 0.5 / camera.zoom;
+    const halfVisibleHeight = (camera.top - camera.bottom) * 0.5 / camera.zoom;
+
+    const minWorldX = camera.position.x - halfVisibleWidth - marginTiles;
+    const maxWorldX = camera.position.x + halfVisibleWidth + marginTiles;
+    const minWorldY = camera.position.y - halfVisibleHeight - marginTiles;
+    const maxWorldY = camera.position.y + halfVisibleHeight + marginTiles;
+
+    const minX = Math.max(0, Math.floor(minWorldX + this.world.width / 2));
+    const maxX = Math.min(this.world.width - 1, Math.floor(maxWorldX + this.world.width / 2));
+
+    const minY = Math.max(0, Math.floor(this.world.height / 2 - maxWorldY));
+    const maxY = Math.min(this.world.height - 1, Math.floor(this.world.height / 2 - minWorldY));
+
+    if (minX > maxX || minY > maxY) {
+      return { minX: 0, maxX: -1, minY: 0, maxY: -1 };
+    }
+
+    return { minX, maxX, minY, maxY };
   }
 }

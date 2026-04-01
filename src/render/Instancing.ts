@@ -2,10 +2,12 @@ import * as THREE from "three";
 
 export class InstancedBatch {
   readonly mesh: THREE.InstancedMesh;
+  private readonly capacity: number;
   private nextIndex = 0;
 
   constructor(mesh: THREE.InstancedMesh) {
     this.mesh = mesh;
+    this.capacity = mesh.count;
   }
 
   reset(): void {
@@ -13,7 +15,7 @@ export class InstancedBatch {
   }
 
   push(matrix: THREE.Matrix4): boolean {
-    if (this.nextIndex >= this.mesh.count) {
+    if (this.nextIndex >= this.capacity) {
       return false;
     }
     this.mesh.setMatrixAt(this.nextIndex, matrix);

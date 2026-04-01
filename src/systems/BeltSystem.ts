@@ -1,6 +1,8 @@
 import { World } from "../core/World";
+import { oppositeDirection } from "../core/types";
 import { isConveyorNode } from "../entities/Conveyor";
 import type { Item } from "../entities/Item";
+import { isInputMachine } from "../entities/Machine";
 
 interface BeltSystemEvents {
   onItemExitedWorld?: (item: Item) => void;
@@ -60,19 +62,45 @@ export class BeltSystem {
       }
 
       const nextTile = world.getTile(nextPosition.x, nextPosition.y);
-      if (!nextTile || !isConveyorNode(nextTile.building) || !nextTile.building.canAcceptItem()) {
+      if (!nextTile || !nextTile.building) {
         continue;
       }
 
-      source.onItemDispatched?.(outputDirection);
+      if (isConveyorNode(nextTile.building) && nextTile.building.canAcceptItem()) {
+        source.onItemDispatched?.(outputDirection);
 
-      const movedItem = source.releaseItem();
-      if (!movedItem) {
+        const movedItem = source.releaseItem();
+        if (!movedItem) {
+          return;
+        }
+
+        nextTile.building.acceptItem(movedItem, Math.min(transfer.carryProgress, 0.99), outputDirection);
         return;
       }
 
-      nextTile.building.acceptItem(movedItem, Math.min(transfer.carryProgress, 0.99), outputDirection);
-      return;
+      if (isInputMachine(nextTile.building)) {
+        const sourceItemType = source.item?.type;
+        if (!sourceItemType) {
+          return;
+        }
+        const inputDirection = oppositeDirection(outputDirection);
+        if (!nextTile.building.canAcceptInput(sourceItemType, inputDirection)) {
+          continue;
+        }
+
+        source.onItemDispatched?.(outputDirection);
+        const movedItem = source.releaseItem();
+        if (!movedItem) {
+          return;
+        }
+
+        const accepted = nextTile.building.acceptInput(movedItem, inputDirection);
+        if (!accepted) {
+          source.acceptItem(movedItem, 1, source.entryDirection);
+          return;
+        }
+        return;
+      }
     }
 
     if (hasOutOfBoundsOutput && outputDirections.length === 1) {
