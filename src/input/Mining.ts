@@ -1,7 +1,9 @@
 import type { GridPosition } from "../core/types";
 import { World } from "../core/World";
 import { Player } from "../entities/Player";
-import { getItemDefinition } from "../data/items";
+import { getItemDefinition, type ItemId } from "../data/items";
+import { isConveyorNode } from "../entities/Conveyor";
+import { isMachine } from "../entities/Machine";
 import { PlayerSystem } from "../systems/PlayerSystem";
 import { HUD } from "../ui/HUD";
 import { MouseInput, type GridPointerButtonEvent, type GridPointerEvent } from "./Mouse";
@@ -22,8 +24,9 @@ export class MiningInputSystem {
 
   private pointerCell: GridPosition | null = null;
   private isRightButtonHeld = false;
-  private miningTarget: GridPosition | null = null;
-  private miningElapsedSeconds = 0;
+  private interactionTarget: GridPosition | null = null;
+  private interactionElapsedSeconds = 0;
+  private interactionMode: "mine" | "pickup" | null = null;
 
   constructor(
     world: World,
@@ -51,42 +54,47 @@ export class MiningInputSystem {
     this.unsubscribePointerDown();
     this.unsubscribePointerMove();
     this.unsubscribeButtonState();
-    this.stopMining();
+    this.stopInteraction();
   }
 
   update(deltaSeconds: number): void {
     if (!this.isInputEnabled()) {
-      this.stopMining();
+      this.stopInteraction();
       this.isRightButtonHeld = false;
       return;
     }
 
     if (!this.isRightButtonHeld || !this.pointerCell) {
-      this.stopMining();
+      this.stopInteraction();
       return;
     }
 
     const target = this.pointerCell;
     const tile = this.world.getTile(target.x, target.y);
-    const resource = tile?.resource ?? null;
-    if (!resource) {
-      this.stopMining();
+    if (!tile) {
+      this.stopInteraction();
       return;
     }
 
-    if (!this.playerSystem.canMineResourceAtGrid(this.player, this.world, target.x, target.y)) {
-      this.stopMining();
+    if (!this.playerSystem.canReachGridCell(this.player, this.world, target.x, target.y)) {
+      this.stopInteraction();
       return;
     }
 
-    if (!this.miningTarget || this.miningTarget.x !== target.x || this.miningTarget.y !== target.y) {
-      this.miningTarget = { x: target.x, y: target.y };
-      this.miningElapsedSeconds = 0;
+    if (tile.building) {
+      this.updateBuildingPickup(target, deltaSeconds);
+      return;
     }
 
-    this.miningElapsedSeconds += deltaSeconds;
-    const progress = Math.min(this.miningElapsedSeconds / this.mineDurationSeconds, 1);
-    const resourceName = getItemDefinition(resource.type).name;
+    if (!tile.resource) {
+      this.stopInteraction();
+      return;
+    }
+
+    this.beginInteraction("mine", target);
+    this.interactionElapsedSeconds += deltaSeconds;
+    const progress = Math.min(this.interactionElapsedSeconds / this.mineDurationSeconds, 1);
+    const resourceName = getItemDefinition(tile.resource.type).name;
     this.hud.setMiningProgress(progress, `Mining ${resourceName}`);
 
     if (progress < 1) {
@@ -94,13 +102,13 @@ export class MiningInputSystem {
     }
 
     const mined = this.playerSystem.mineResourceAtGrid(this.player, this.world, target.x, target.y, 1);
-    this.miningElapsedSeconds = 0;
+    this.interactionElapsedSeconds = 0;
 
     const afterMine = this.world.getTile(target.x, target.y)?.resource ?? null;
     this.hud.setHoveredResource(afterMine ? { type: afterMine.type, amount: afterMine.amount } : null);
 
     if (!mined || !afterMine) {
-      this.stopMining();
+      this.stopInteraction();
     }
   }
 
@@ -125,7 +133,7 @@ export class MiningInputSystem {
 
     if (!this.isInputEnabled()) {
       this.isRightButtonHeld = false;
-      this.stopMining();
+      this.stopInteraction();
       return;
     }
 
@@ -135,7 +143,7 @@ export class MiningInputSystem {
     }
 
     if (!event.isDown) {
-      this.stopMining();
+      this.stopInteraction();
     }
   };
 
@@ -145,21 +153,92 @@ export class MiningInputSystem {
 
     if (!position) {
       this.hud.setHoveredResource(null);
-      this.stopMining();
+      this.stopInteraction();
       return;
     }
 
-    const hoveredResource = this.world.getTile(position.x, position.y)?.resource ?? null;
+    const hoveredTile = this.world.getTile(position.x, position.y);
+    const hoveredResource = hoveredTile?.building ? null : (hoveredTile?.resource ?? null);
     this.hud.setHoveredResource(hoveredResource ? { type: hoveredResource.type, amount: hoveredResource.amount } : null);
 
-    if (this.miningTarget && (this.miningTarget.x !== position.x || this.miningTarget.y !== position.y)) {
-      this.stopMining();
+    if (this.interactionTarget && (this.interactionTarget.x !== position.x || this.interactionTarget.y !== position.y)) {
+      this.stopInteraction();
     }
   }
 
-  private stopMining(): void {
-    this.miningTarget = null;
-    this.miningElapsedSeconds = 0;
+  private updateBuildingPickup(target: GridPosition, deltaSeconds: number): void {
+    this.beginInteraction("pickup", target);
+    this.interactionElapsedSeconds += deltaSeconds;
+    const progress = Math.min(this.interactionElapsedSeconds / this.mineDurationSeconds, 1);
+    this.hud.setMiningProgress(progress, "Picking Up Building");
+
+    if (progress < 1) {
+      return;
+    }
+
+    const picked = this.tryPickupBuildingAt(target.x, target.y);
+    this.interactionElapsedSeconds = 0;
+    const hoveredResource = this.world.getTile(target.x, target.y)?.resource ?? null;
+    this.hud.setHoveredResource(hoveredResource ? { type: hoveredResource.type, amount: hoveredResource.amount } : null);
+
+    if (!picked) {
+      this.stopInteraction();
+    }
+  }
+
+  private beginInteraction(mode: "mine" | "pickup", target: GridPosition): void {
+    if (
+      this.interactionMode !== mode ||
+      !this.interactionTarget ||
+      this.interactionTarget.x !== target.x ||
+      this.interactionTarget.y !== target.y
+    ) {
+      this.interactionMode = mode;
+      this.interactionTarget = { x: target.x, y: target.y };
+      this.interactionElapsedSeconds = 0;
+    }
+  }
+
+  private tryPickupBuildingAt(gridX: number, gridY: number): boolean {
+    const tile = this.world.getTile(gridX, gridY);
+    if (!tile?.building) {
+      return false;
+    }
+
+    if (!this.playerSystem.canReachGridCell(this.player, this.world, gridX, gridY)) {
+      return false;
+    }
+
+    const pickupItem = this.getBuildingPickupItem(tile.building);
+    this.world.clearBuilding(gridX, gridY);
+    if (pickupItem) {
+      this.player.inventory.add(pickupItem, 1);
+    }
+    return true;
+  }
+
+  private getBuildingPickupItem(building: unknown): ItemId | null {
+    if (isConveyorNode(building)) {
+      if (building.kind === "belt") {
+        return "belt_item";
+      }
+      if (building.kind === "router") {
+        return "router_item";
+      }
+    }
+    if (isMachine(building) && building.machineType === "furnace") {
+      return "furnace_item";
+    }
+    if (isMachine(building) && building.machineType === "drill") {
+      return "drill_item";
+    }
+    return null;
+  }
+
+  private stopInteraction(): void {
+    this.interactionTarget = null;
+    this.interactionElapsedSeconds = 0;
+    this.interactionMode = null;
     this.hud.setMiningProgress(null);
   }
 }

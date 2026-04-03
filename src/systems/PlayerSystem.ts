@@ -120,9 +120,22 @@ export class PlayerSystem {
   }
 
   canMineResourceAtGrid(player: Player, world: World, gridX: number, gridY: number): boolean {
+    if (!this.canReachGridCell(player, world, gridX, gridY)) {
+      return false;
+    }
+
+    const tile = world.getTile(gridX, gridY);
+    if (!tile?.resource) {
+      return false;
+    }
+
+    return tile.building === null;
+  }
+
+  canReachGridCell(player: Player, world: World, gridX: number, gridY: number): boolean {
     const distance = this.getDistanceToGridCell(player, world, gridX, gridY);
-    const maxMineDistance = player.pickupRadius + 0.9;
-    return distance <= maxMineDistance;
+    const maxReachDistance = player.pickupRadius + 0.9;
+    return distance <= maxReachDistance;
   }
 
   private getDistanceToGridCell(player: Player, world: World, gridX: number, gridY: number): number {

@@ -19,6 +19,7 @@ export interface InventoryTransferRequest {
   fromIndex: number;
   toSection: InventorySection;
   toIndex: number;
+  amount?: number;
 }
 
 export interface CraftRecipeView {
@@ -26,11 +27,39 @@ export interface CraftRecipeView {
   title: string;
   outputLabel: string;
   inputLabel: string;
+  craftTimeLabel: string;
   canCraft: boolean;
+}
+
+export interface CraftingStatusView {
+  recipeTitle: string | null;
+  progress01: number | null;
+  remainingSeconds: number | null;
+  queuedCount: number;
+}
+
+export interface FurnaceGuiView {
+  gridX: number;
+  gridY: number;
+  oreCount: number;
+  oreCapacity: number;
+  fuelCount: number;
+  fuelCapacity: number;
+  outputCount: number;
+  outputCapacity: number;
+  progress01: number;
+}
+
+export type MachineTransferMode = "all" | "half" | "single";
+
+export interface MachineGuiActionRequest {
+  action: "insert_ore" | "take_ore" | "insert_fuel" | "take_fuel" | "take_output" | "close";
+  mode: MachineTransferMode;
 }
 
 type InventoryTransferListener = (request: InventoryTransferRequest) => void;
 type CraftRequestListener = (recipeId: string) => void;
+type MachineGuiActionListener = (request: MachineGuiActionRequest) => void;
 
 interface InventorySlotView {
   root: HTMLDivElement;
@@ -46,6 +75,14 @@ interface CraftRecipeRowView {
   button: HTMLButtonElement;
 }
 
+interface MachineSlotView {
+  root: HTMLButtonElement;
+  label: HTMLDivElement;
+  swatch: HTMLDivElement;
+  name: HTMLDivElement;
+  count: HTMLDivElement;
+}
+
 export class HUD {
   private readonly root: HTMLDivElement;
   private readonly modeLine: HTMLDivElement;
@@ -56,7 +93,13 @@ export class HUD {
   private readonly miningLine: HTMLDivElement;
   private readonly miningBarTrack: HTMLDivElement;
   private readonly miningBarFill: HTMLDivElement;
-  private readonly controlsLine: HTMLDivElement;
+  private readonly craftingLine: HTMLDivElement;
+  private readonly craftingBarTrack: HTMLDivElement;
+  private readonly craftingBarFill: HTMLDivElement;
+  private readonly activityRoot: HTMLDivElement;
+  private readonly miningActivityBlock: HTMLDivElement;
+  private readonly craftingActivityBlock: HTMLDivElement;
+  // private readonly controlsLine: HTMLDivElement;
 
   private readonly quickbarRoot: HTMLDivElement;
   private readonly quickbarTitle: HTMLDivElement;
@@ -67,17 +110,60 @@ export class HUD {
   private readonly inventoryBackpackTitle: HTMLDivElement;
   private readonly inventorySelectionLine: HTMLDivElement;
   private readonly craftRecipesRoot: HTMLDivElement;
+  private readonly machineOverlay: HTMLDivElement;
+  private readonly machineTitle: HTMLDivElement;
+  private readonly machinePositionLine: HTMLDivElement;
+  private readonly machineOreSlot: MachineSlotView;
+  private readonly machineFuelSlot: MachineSlotView;
+  private readonly machineOutputSlot: MachineSlotView;
+  private readonly machineProgressLine: HTMLDivElement;
+  private readonly machineProgressTrack: HTMLDivElement;
+  private readonly machineProgressFill: HTMLDivElement;
+  private readonly machineCloseButton: HTMLButtonElement;
   private readonly inventoryHotbarSlots: InventorySlotView[] = [];
   private readonly inventoryBackpackSlots: InventorySlotView[] = [];
 
   private readonly inventoryTransferListeners: InventoryTransferListener[] = [];
   private readonly craftRequestListeners: CraftRequestListener[] = [];
+  private readonly machineGuiActionListeners: MachineGuiActionListener[] = [];
   private readonly craftRows = new Map<string, CraftRecipeRowView>();
+  private miningActivityVisible = false;
+  private craftingActivityVisible = false;
 
   private dragSourceSlot: { section: InventorySection; index: number } | null = null;
   private dragTargetSlot: { section: InventorySection; index: number } | null = null;
+  private dragAmount: number | null = null;
+  private pendingDragModifiers: {
+    section: InventorySection;
+    index: number;
+    shiftKey: boolean;
+    ctrlKey: boolean;
+  } | null = null;
+  private isShiftHeld = false;
+  private isCtrlHeld = false;
   private selectedQuickbarIndex = 0;
   private inventoryOpen = false;
+  private machineGuiOpen = false;
+  private machineGuiView: FurnaceGuiView | null = null;
+  private readonly onWindowResize = (): void => {
+    this.updateActivityAnchor();
+  };
+  private readonly onWindowKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Shift") {
+      this.isShiftHeld = true;
+    }
+    if (event.key === "Control") {
+      this.isCtrlHeld = true;
+    }
+  };
+  private readonly onWindowKeyUp = (event: KeyboardEvent): void => {
+    if (event.key === "Shift") {
+      this.isShiftHeld = false;
+    }
+    if (event.key === "Control") {
+      this.isCtrlHeld = false;
+    }
+  };
 
   private lastInventoryView: PlayerInventoryView = {
     hotbar: Array.from({ length: HOTBAR_SLOT_COUNT }, () => null),
@@ -108,11 +194,14 @@ export class HUD {
     this.miningLine = document.createElement("div");
     this.miningBarTrack = document.createElement("div");
     this.miningBarFill = document.createElement("div");
-    this.controlsLine = document.createElement("div");
-    this.controlsLine.style.marginTop = "8px";
-    this.controlsLine.style.color = "#a6b4c4";
-    this.controlsLine.textContent =
-      "WASD move, hold RMB mine, LMB place/insert, 1-0 select slot, F collect, Q/E or wheel zoom, TAB inventory";
+    this.craftingLine = document.createElement("div");
+    this.craftingBarTrack = document.createElement("div");
+    this.craftingBarFill = document.createElement("div");
+    // this.controlsLine = document.createElement("div");
+    // this.controlsLine.style.marginTop = "8px";
+    // this.controlsLine.style.color = "#a6b4c4";
+    // this.controlsLine.textContent =
+    //   "WASD move, hold RMB mine/pick building, LMB place/insert, R rotate build, 1-0 select slot, F collect, Q/E or wheel zoom, TAB inventory";
 
     this.modeLine.textContent = "Mode: Mining";
     this.resourceLine.textContent = "Resource: -";
@@ -127,15 +216,24 @@ export class HUD {
     this.miningBarFill.style.background = "linear-gradient(90deg, #4aa3ff, #5bd4ff)";
     this.miningBarTrack.appendChild(this.miningBarFill);
 
+    this.craftingLine.textContent = "Crafting: -";
+    this.craftingBarTrack.style.height = "6px";
+    this.craftingBarTrack.style.marginTop = "4px";
+    this.craftingBarTrack.style.borderRadius = "999px";
+    this.craftingBarTrack.style.background = "rgba(58, 71, 88, 0.7)";
+    this.craftingBarTrack.style.overflow = "hidden";
+    this.craftingBarFill.style.width = "0%";
+    this.craftingBarFill.style.height = "100%";
+    this.craftingBarFill.style.background = "linear-gradient(90deg, #f5a524, #ffd37a)";
+    this.craftingBarTrack.appendChild(this.craftingBarFill);
+
     this.root.append(
       this.modeLine,
       this.playerLine,
       this.cellLine,
       this.statsLine,
       this.resourceLine,
-      this.miningLine,
-      this.miningBarTrack,
-      this.controlsLine
+      // this.controlsLine
     );
     parent.appendChild(this.root);
 
@@ -176,6 +274,46 @@ export class HUD {
     }
 
     parent.appendChild(this.quickbarRoot);
+
+    this.activityRoot = document.createElement("div");
+    this.activityRoot.style.position = "fixed";
+    this.activityRoot.style.left = "50%";
+    this.activityRoot.style.transform = "translateX(-50%)";
+    this.activityRoot.style.display = "none";
+    this.activityRoot.style.flexDirection = "column";
+    this.activityRoot.style.gap = "6px";
+    this.activityRoot.style.padding = "8px 10px";
+    this.activityRoot.style.border = "1px solid #3a4758";
+    this.activityRoot.style.borderRadius = "10px";
+    this.activityRoot.style.background = "rgba(13, 17, 23, 0.9)";
+    this.activityRoot.style.color = "#dce7f3";
+    this.activityRoot.style.font = "12px/1.5 monospace";
+    this.activityRoot.style.pointerEvents = "none";
+    this.activityRoot.style.backdropFilter = "blur(2px)";
+    this.activityRoot.style.minWidth = "300px";
+    this.activityRoot.style.maxWidth = "calc(100vw - 16px)";
+    this.activityRoot.style.zIndex = "12";
+
+    this.miningActivityBlock = document.createElement("div");
+    this.miningActivityBlock.style.display = "none";
+    this.miningActivityBlock.style.flexDirection = "column";
+    this.miningActivityBlock.style.gap = "4px";
+    this.miningActivityBlock.append(this.miningLine, this.miningBarTrack);
+    this.activityRoot.appendChild(this.miningActivityBlock);
+
+    this.craftingActivityBlock = document.createElement("div");
+    this.craftingActivityBlock.style.display = "none";
+    this.craftingActivityBlock.style.flexDirection = "column";
+    this.craftingActivityBlock.style.gap = "4px";
+    this.craftingActivityBlock.append(this.craftingLine, this.craftingBarTrack);
+    this.activityRoot.appendChild(this.craftingActivityBlock);
+
+    parent.appendChild(this.activityRoot);
+    this.updateActivityVisibility();
+    this.updateActivityAnchor();
+    window.addEventListener("resize", this.onWindowResize);
+    window.addEventListener("keydown", this.onWindowKeyDown);
+    window.addEventListener("keyup", this.onWindowKeyUp);
 
     this.inventoryOverlay = document.createElement("div");
     this.inventoryOverlay.style.position = "fixed";
@@ -219,7 +357,7 @@ export class HUD {
 
     const headerHint = document.createElement("div");
     headerHint.style.color = "#9ab0c6";
-    headerHint.textContent = "Tab close, drag stack from source slot to target slot";
+    headerHint.textContent = "Drag stacks; Shift+LMB half, Ctrl+LMB one";
 
     header.append(headerTitle, headerHint);
     inventoryWindow.appendChild(header);
@@ -318,7 +456,7 @@ export class HUD {
     const craftHint = document.createElement("div");
     craftHint.style.color = "#9bb0c5";
     craftHint.style.marginBottom = "8px";
-    craftHint.textContent = "Craft result goes to inventory.";
+    craftHint.textContent = "Crafts are queued and processed one by one.";
     craftPanel.appendChild(craftHint);
 
     this.craftRecipesRoot = document.createElement("div");
@@ -336,6 +474,208 @@ export class HUD {
     this.inventoryOverlay.addEventListener("drop", this.handleInventoryOverlayDrop);
 
     parent.appendChild(this.inventoryOverlay);
+
+    this.machineOverlay = document.createElement("div");
+    this.machineOverlay.style.position = "fixed";
+    this.machineOverlay.style.inset = "0";
+    this.machineOverlay.style.display = "none";
+    this.machineOverlay.style.alignItems = "center";
+    this.machineOverlay.style.justifyContent = "center";
+    this.machineOverlay.style.background = "rgba(3, 8, 13, 0.36)";
+    this.machineOverlay.style.pointerEvents = "auto";
+    this.machineOverlay.style.zIndex = "19";
+
+    const machineWindow = document.createElement("div");
+    machineWindow.style.display = "flex";
+    machineWindow.style.flexDirection = "column";
+    machineWindow.style.gap = "10px";
+    machineWindow.style.width = "min(440px, calc(100vw - 24px))";
+    machineWindow.style.padding = "12px";
+    machineWindow.style.boxSizing = "border-box";
+    machineWindow.style.borderRadius = "12px";
+    machineWindow.style.border = "1px solid #3a4758";
+    machineWindow.style.background = "rgba(8, 13, 20, 0.97)";
+    machineWindow.style.color = "#dce7f3";
+    machineWindow.style.font = "12px/1.4 monospace";
+    this.machineOverlay.appendChild(machineWindow);
+
+    const machineHeader = document.createElement("div");
+    machineHeader.style.display = "flex";
+    machineHeader.style.justifyContent = "space-between";
+    machineHeader.style.alignItems = "center";
+    machineHeader.style.gap = "8px";
+    machineHeader.style.paddingBottom = "8px";
+    machineHeader.style.borderBottom = "1px solid #273646";
+    machineWindow.appendChild(machineHeader);
+
+    this.machineTitle = document.createElement("div");
+    this.machineTitle.style.font = "14px/1.2 monospace";
+    this.machineTitle.style.color = "#e4edf7";
+    this.machineTitle.textContent = "Machine";
+    machineHeader.appendChild(this.machineTitle);
+
+    this.machineCloseButton = document.createElement("button");
+    this.machineCloseButton.type = "button";
+    this.machineCloseButton.style.border = "1px solid #3f5062";
+    this.machineCloseButton.style.borderRadius = "6px";
+    this.machineCloseButton.style.background = "#1b2735";
+    this.machineCloseButton.style.color = "#dce8f5";
+    this.machineCloseButton.style.font = "11px/1.2 monospace";
+    this.machineCloseButton.style.padding = "4px 8px";
+    this.machineCloseButton.style.cursor = "pointer";
+    this.machineCloseButton.textContent = "Close";
+    this.machineCloseButton.addEventListener("click", () => this.emitMachineGuiAction({ action: "close", mode: "all" }));
+    machineHeader.appendChild(this.machineCloseButton);
+
+    this.machinePositionLine = document.createElement("div");
+    this.machinePositionLine.style.color = "#9cb0c4";
+    this.machinePositionLine.textContent = "Cell: -";
+    machineWindow.appendChild(this.machinePositionLine);
+
+    const machineSlotsRow = document.createElement("div");
+    machineSlotsRow.style.display = "grid";
+    machineSlotsRow.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
+    machineSlotsRow.style.gap = "8px";
+    machineWindow.appendChild(machineSlotsRow);
+
+    const makeMachineSlot = (labelText: string, itemId: ItemId): MachineSlotView => {
+      const definition = getItemDefinition(itemId);
+      const itemColor = this.toCssColor(definition.color);
+
+      const root = document.createElement("button");
+      root.type = "button";
+      root.style.border = "1px solid #3a4758";
+      root.style.borderRadius = "8px";
+      root.style.background = "rgba(11, 16, 24, 0.86)";
+      root.style.display = "flex";
+      root.style.flexDirection = "column";
+      root.style.justifyContent = "space-between";
+      root.style.alignItems = "stretch";
+      root.style.gap = "6px";
+      root.style.padding = "8px";
+      root.style.minHeight = "92px";
+      root.style.cursor = "pointer";
+      root.style.color = "#dce8f5";
+      root.style.font = "12px/1.3 monospace";
+      root.style.textAlign = "left";
+
+      const top = document.createElement("div");
+      top.style.display = "flex";
+      top.style.alignItems = "center";
+      top.style.justifyContent = "space-between";
+      top.style.gap = "8px";
+      root.appendChild(top);
+
+      const label = document.createElement("div");
+      label.style.color = "#95abc1";
+      label.style.font = "10px/1.1 monospace";
+      label.textContent = labelText;
+      top.appendChild(label);
+
+      const swatch = document.createElement("div");
+      swatch.style.width = "11px";
+      swatch.style.height = "11px";
+      swatch.style.borderRadius = "50%";
+      swatch.style.background = itemColor;
+      swatch.style.flex = "0 0 auto";
+      top.appendChild(swatch);
+
+      const name = document.createElement("div");
+      name.style.color = "#dce8f5";
+      name.style.font = "11px/1.2 monospace";
+      name.style.wordBreak = "break-word";
+      name.textContent = definition.name;
+      root.appendChild(name);
+
+      const count = document.createElement("div");
+      count.style.color = "#b9cce0";
+      count.style.font = "12px/1.2 monospace";
+      count.style.textAlign = "right";
+      count.textContent = "0 / 0";
+      root.appendChild(count);
+
+      return {
+        root,
+        label,
+        swatch,
+        name,
+        count,
+      };
+    };
+
+    const bindMachineSlotAction = (
+      slot: MachineSlotView,
+      primaryAction: MachineGuiActionRequest["action"],
+      secondaryAction: MachineGuiActionRequest["action"] | null
+    ): void => {
+      slot.root.addEventListener("click", (event) => {
+        const mode = this.resolveMachineTransferMode(event);
+        this.emitMachineGuiAction({ action: primaryAction, mode });
+      });
+      slot.root.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        const mode = this.resolveMachineTransferMode(event);
+        const action = secondaryAction ?? primaryAction;
+        this.emitMachineGuiAction({ action, mode });
+      });
+    };
+
+    this.machineOreSlot = makeMachineSlot("Ore", "iron_ore");
+    this.machineOreSlot.root.title = "LMB put ore, RMB take ore, Shift half, Ctrl one";
+    bindMachineSlotAction(this.machineOreSlot, "insert_ore", "take_ore");
+    machineSlotsRow.appendChild(this.machineOreSlot.root);
+
+    this.machineFuelSlot = makeMachineSlot("Fuel", "coal_ore");
+    this.machineFuelSlot.root.title = "LMB put fuel, RMB take fuel, Shift half, Ctrl one";
+    bindMachineSlotAction(this.machineFuelSlot, "insert_fuel", "take_fuel");
+    machineSlotsRow.appendChild(this.machineFuelSlot.root);
+
+    this.machineOutputSlot = makeMachineSlot("Output", "iron_plate");
+    this.machineOutputSlot.root.title = "LMB/RMB take output, Shift half, Ctrl one";
+    bindMachineSlotAction(this.machineOutputSlot, "take_output", "take_output");
+    machineSlotsRow.appendChild(this.machineOutputSlot.root);
+
+    const machineHintLine = document.createElement("div");
+    machineHintLine.style.color = "#8da3b8";
+    machineHintLine.style.font = "11px/1.35 monospace";
+    machineHintLine.textContent = "LMB put, RMB take. Shift = half, Ctrl = one.";
+    machineWindow.appendChild(machineHintLine);
+
+    const progressBlock = document.createElement("div");
+    progressBlock.style.border = "1px solid #324356";
+    progressBlock.style.borderRadius = "8px";
+    progressBlock.style.padding = "8px";
+    progressBlock.style.background = "rgba(11, 16, 24, 0.86)";
+    progressBlock.style.display = "flex";
+    progressBlock.style.flexDirection = "column";
+    progressBlock.style.gap = "6px";
+    machineWindow.appendChild(progressBlock);
+
+    this.machineProgressLine = document.createElement("div");
+    this.machineProgressLine.style.color = "#dce8f5";
+    this.machineProgressLine.textContent = "Smelt Progress: 0%";
+    progressBlock.appendChild(this.machineProgressLine);
+
+    this.machineProgressTrack = document.createElement("div");
+    this.machineProgressTrack.style.height = "8px";
+    this.machineProgressTrack.style.borderRadius = "999px";
+    this.machineProgressTrack.style.background = "rgba(58, 71, 88, 0.7)";
+    this.machineProgressTrack.style.overflow = "hidden";
+    progressBlock.appendChild(this.machineProgressTrack);
+
+    this.machineProgressFill = document.createElement("div");
+    this.machineProgressFill.style.width = "0%";
+    this.machineProgressFill.style.height = "100%";
+    this.machineProgressFill.style.background = "linear-gradient(90deg, #f5a524, #ffd37a)";
+    this.machineProgressTrack.appendChild(this.machineProgressFill);
+
+    this.machineOverlay.addEventListener("click", (event) => {
+      if (event.target === this.machineOverlay) {
+        this.emitMachineGuiAction({ action: "close", mode: "all" });
+      }
+    });
+
+    parent.appendChild(this.machineOverlay);
   }
 
   setHoveredCell(position: GridPosition | null): void {
@@ -363,12 +703,74 @@ export class HUD {
     if (progress === null || Number.isNaN(progress)) {
       this.miningLine.textContent = "Mining: -";
       this.miningBarFill.style.width = "0%";
+      this.miningActivityVisible = false;
+      this.updateActivityVisibility();
       return;
     }
 
     const clamped = Math.min(Math.max(progress, 0), 1);
     this.miningLine.textContent = `${label}: ${Math.round(clamped * 100)}%`;
     this.miningBarFill.style.width = `${(clamped * 100).toFixed(1)}%`;
+    this.miningActivityVisible = true;
+    this.updateActivityVisibility();
+  }
+
+  setCraftingStatus(status: CraftingStatusView): void {
+    const queueLabel = status.queuedCount > 0 ? ` | Queue: ${status.queuedCount}` : "";
+    if (!status.recipeTitle || status.progress01 === null || Number.isNaN(status.progress01)) {
+      this.craftingLine.textContent = `Crafting: -${queueLabel}`;
+      this.craftingBarFill.style.width = "0%";
+      this.craftingActivityVisible = false;
+      this.updateActivityVisibility();
+      return;
+    }
+
+    const clamped = Math.min(Math.max(status.progress01, 0), 1);
+    const remainingLabel = status.remainingSeconds !== null && Number.isFinite(status.remainingSeconds)
+      ? `${Math.max(status.remainingSeconds, 0).toFixed(1)}s left`
+      : "working";
+    this.craftingLine.textContent =
+      `Crafting: ${status.recipeTitle} (${Math.round(clamped * 100)}%, ${remainingLabel})${queueLabel}`;
+    this.craftingBarFill.style.width = `${(clamped * 100).toFixed(1)}%`;
+    this.craftingActivityVisible = true;
+    this.updateActivityVisibility();
+  }
+
+  setFurnaceGui(view: FurnaceGuiView | null): void {
+    this.machineGuiView = view;
+    this.machineGuiOpen = view !== null;
+    this.machineOverlay.style.display = this.machineGuiOpen ? "flex" : "none";
+    if (!view) {
+      return;
+    }
+
+    this.machineTitle.textContent = "Stone Furnace";
+    this.machinePositionLine.textContent = `Cell: (${view.gridX}, ${view.gridY})`;
+    this.machineOreSlot.count.textContent = `${view.oreCount} / ${view.oreCapacity}`;
+    this.machineFuelSlot.count.textContent = `${view.fuelCount} / ${view.fuelCapacity}`;
+    this.machineOutputSlot.count.textContent = `${view.outputCount} / ${view.outputCapacity}`;
+    const progress01 = Math.min(Math.max(view.progress01, 0), 1);
+    this.machineProgressLine.textContent = `Smelt Progress: ${Math.round(progress01 * 100)}%`;
+    this.machineProgressFill.style.width = `${(progress01 * 100).toFixed(1)}%`;
+
+    this.machineOreSlot.root.disabled = false;
+    this.machineFuelSlot.root.disabled = false;
+    this.machineOutputSlot.root.disabled = view.outputCount <= 0;
+    this.machineOutputSlot.root.style.opacity = view.outputCount > 0 ? "1" : "0.6";
+  }
+
+  isMachineGuiOpen(): boolean {
+    return this.machineGuiOpen;
+  }
+
+  onMachineGuiAction(listener: MachineGuiActionListener): () => void {
+    this.machineGuiActionListeners.push(listener);
+    return () => {
+      const index = this.machineGuiActionListeners.indexOf(listener);
+      if (index >= 0) {
+        this.machineGuiActionListeners.splice(index, 1);
+      }
+    };
   }
 
   setPlayerInventory(view: PlayerInventoryView): void {
@@ -402,6 +804,7 @@ export class HUD {
     } else {
       this.updateDragUi();
     }
+    this.updateActivityAnchor();
   }
 
   setSelectedQuickbarIndex(index: number): void {
@@ -433,7 +836,7 @@ export class HUD {
       }
 
       row.title.textContent = recipe.title;
-      row.details.textContent = `${recipe.outputLabel} | ${recipe.inputLabel}`;
+      row.details.textContent = `${recipe.outputLabel} | ${recipe.inputLabel} | ${recipe.craftTimeLabel}`;
       row.button.disabled = !recipe.canCraft;
       row.button.textContent = recipe.canCraft ? "Craft" : "Need Items";
     }
@@ -479,9 +882,39 @@ export class HUD {
   }
 
   dispose(): void {
+    window.removeEventListener("resize", this.onWindowResize);
+    window.removeEventListener("keydown", this.onWindowKeyDown);
+    window.removeEventListener("keyup", this.onWindowKeyUp);
     this.root.remove();
     this.quickbarRoot.remove();
+    this.activityRoot.remove();
     this.inventoryOverlay.remove();
+    this.machineOverlay.remove();
+  }
+
+  private updateActivityVisibility(): void {
+    this.miningActivityBlock.style.display = this.miningActivityVisible ? "flex" : "none";
+    this.craftingActivityBlock.style.display = this.craftingActivityVisible ? "flex" : "none";
+
+    const isVisible = this.miningActivityVisible || this.craftingActivityVisible;
+    this.activityRoot.style.display = isVisible ? "flex" : "none";
+    if (isVisible) {
+      this.updateActivityAnchor();
+    }
+  }
+
+  private updateActivityAnchor(): void {
+    if (!this.quickbarRoot.isConnected || !this.activityRoot.isConnected) {
+      return;
+    }
+
+    const quickbarRect = this.quickbarRoot.getBoundingClientRect();
+    if (quickbarRect.height <= 0) {
+      return;
+    }
+
+    const bottom = Math.max(12, window.innerHeight - quickbarRect.top + 8);
+    this.activityRoot.style.bottom = `${bottom.toFixed(0)}px`;
   }
 
   private createSlotView(sizePx: number, index: number, interactive: boolean): InventorySlotView {
@@ -576,10 +1009,11 @@ export class HUD {
     view.root.dataset.inventoryIndex = String(index);
     view.root.draggable = true;
     view.root.style.cursor = "grab";
-    view.root.title = "Drag stack";
+    view.root.title = "Drag stack (Shift: half, Ctrl: one)";
 
     view.root.addEventListener("dragstart", (event) => this.handleSlotDragStart(event, section, index));
     view.root.addEventListener("dragend", () => this.clearDragState());
+    view.root.addEventListener("pointerdown", (event) => this.handleSlotPointerDown(event, section, index));
   }
 
   private handleSlotDragStart(event: DragEvent, section: InventorySection, index: number): void {
@@ -596,6 +1030,14 @@ export class HUD {
 
     this.dragSourceSlot = { section, index };
     this.dragTargetSlot = null;
+    const pending = this.pendingDragModifiers;
+    const usePending =
+      pending !== null &&
+      pending.section === section &&
+      pending.index === index;
+    const shiftKey = (usePending ? pending.shiftKey : false) || event.shiftKey || this.isShiftHeld;
+    const ctrlKey = (usePending ? pending.ctrlKey : false) || event.ctrlKey || this.isCtrlHeld;
+    this.dragAmount = this.resolveDragAmount(stack.count, shiftKey, ctrlKey);
     this.updateDragUi();
 
     if (event.dataTransfer) {
@@ -603,6 +1045,18 @@ export class HUD {
       event.dataTransfer.dropEffect = "move";
       event.dataTransfer.setData("text/plain", `${section}:${index}`);
     }
+  }
+
+  private handleSlotPointerDown(event: PointerEvent, section: InventorySection, index: number): void {
+    if (event.button !== 0) {
+      return;
+    }
+    this.pendingDragModifiers = {
+      section,
+      index,
+      shiftKey: event.shiftKey,
+      ctrlKey: event.ctrlKey,
+    };
   }
 
   private readonly handleInventoryOverlayDragOver = (event: DragEvent): void => {
@@ -645,6 +1099,7 @@ export class HUD {
         fromIndex: source.index,
         toSection: target.section,
         toIndex: target.index,
+        amount: this.dragAmount ?? undefined,
       };
 
       for (const listener of this.inventoryTransferListeners) {
@@ -666,6 +1121,8 @@ export class HUD {
   private clearDragState(): void {
     this.dragSourceSlot = null;
     this.dragTargetSlot = null;
+    this.dragAmount = null;
+    this.pendingDragModifiers = null;
     this.updateDragUi();
   }
 
@@ -684,16 +1141,32 @@ export class HUD {
     }
 
     const definition = getItemDefinition(stack.itemId);
+    const transferCount = this.resolveTransferCount(stack.count);
     const sourceLabel = this.getSlotLabel(this.dragSourceSlot.section, this.dragSourceSlot.index);
     if (this.dragTargetSlot) {
       const targetLabel = this.getSlotLabel(this.dragTargetSlot.section, this.dragTargetSlot.index);
       this.inventorySelectionLine.textContent =
-        `Drag: ${definition.name} x${stack.count} (${sourceLabel} -> ${targetLabel})`;
+        `Drag: ${definition.name} x${transferCount} (${sourceLabel} -> ${targetLabel})`;
     } else {
       this.inventorySelectionLine.textContent =
-        `Drag: ${definition.name} x${stack.count} from ${sourceLabel}`;
+        `Drag: ${definition.name} x${transferCount} from ${sourceLabel}`;
     }
     this.applyDragHighlights(this.dragSourceSlot, this.dragTargetSlot);
+  }
+
+  private resolveDragAmount(stackCount: number, shiftKey: boolean, ctrlKey: boolean): number {
+    if (ctrlKey) {
+      return 1;
+    }
+    if (shiftKey) {
+      return Math.max(1, Math.ceil(stackCount / 2));
+    }
+    return stackCount;
+  }
+
+  private resolveTransferCount(stackCount: number): number {
+    const requested = this.dragAmount ?? stackCount;
+    return Math.max(1, Math.min(stackCount, requested));
   }
 
   private applyDragHighlights(
@@ -846,6 +1319,22 @@ export class HUD {
     for (const listener of this.craftRequestListeners) {
       listener(recipeId);
     }
+  }
+
+  private emitMachineGuiAction(request: MachineGuiActionRequest): void {
+    for (const listener of this.machineGuiActionListeners) {
+      listener(request);
+    }
+  }
+
+  private resolveMachineTransferMode(event: MouseEvent): MachineTransferMode {
+    if (event.ctrlKey) {
+      return "single";
+    }
+    if (event.shiftKey) {
+      return "half";
+    }
+    return "all";
   }
 
   private cloneSlot(slot: InventorySlotStack | null): InventorySlotStack | null {

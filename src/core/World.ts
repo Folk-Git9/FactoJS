@@ -1,4 +1,5 @@
 import { Belt } from "../entities/Belt";
+import { Drill } from "../entities/Drill";
 import { isConveyorNode } from "../entities/Conveyor";
 import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
@@ -111,6 +112,17 @@ export class World {
     const furnace = new Furnace(direction);
     tile.building = furnace;
     return furnace;
+  }
+
+  placeDrill(x: number, y: number, direction: Direction): Drill | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    const drill = new Drill(direction, () => this.mineResourceAt(x, y, 1));
+    tile.building = drill;
+    return drill;
   }
 
   clearBuilding(x: number, y: number): void {

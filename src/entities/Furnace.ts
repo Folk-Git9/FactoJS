@@ -13,6 +13,16 @@ const ORE_TO_OUTPUT: Partial<Record<ItemId, ItemId>> = {
   iron_ore: "iron_plate",
 };
 
+export interface FurnaceUiState {
+  oreCount: number;
+  oreCapacity: number;
+  fuelCount: number;
+  fuelCapacity: number;
+  outputCount: number;
+  outputCapacity: number;
+  progress01: number;
+}
+
 export class Furnace implements ProducerMachine, InputMachine {
   readonly kind = "machine";
   readonly machineType = "furnace";
@@ -110,19 +120,32 @@ export class Furnace implements ProducerMachine, InputMachine {
     return new Item("iron_plate");
   }
 
-  get debugState(): {
-    ore: number;
-    fuel: number;
-    burnCharges: number;
-    output: number;
-    progress01: number;
-  } {
+  takeOreItem(): Item | null {
+    if (this.oreInputCount <= 0) {
+      return null;
+    }
+    this.oreInputCount -= 1;
+    return new Item("iron_ore");
+  }
+
+  takeFuelItem(): Item | null {
+    if (this.fuelCount <= 0) {
+      return null;
+    }
+    this.fuelCount -= 1;
+    return new Item("coal_ore");
+  }
+
+  get debugState(): FurnaceUiState & { burnCharges: number } {
     const progress01 = this.smeltSeconds > 0 ? Math.min(this.timerSeconds / this.smeltSeconds, 1) : 0;
     return {
-      ore: this.oreInputCount,
-      fuel: this.fuelCount,
+      oreCount: this.oreInputCount,
+      oreCapacity: this.maxOre,
+      fuelCount: this.fuelCount,
+      fuelCapacity: this.maxFuel,
       burnCharges: this.burnCharges,
-      output: this.outputCount,
+      outputCount: this.outputCount,
+      outputCapacity: this.maxOutput,
       progress01,
     };
   }

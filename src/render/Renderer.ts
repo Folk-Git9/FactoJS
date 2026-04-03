@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { DIRECTION_TO_WORLD_OFFSET, oppositeDirection, type GridPosition } from "../core/types";
+import { DIRECTION_TO_WORLD_OFFSET, oppositeDirection, type Direction, type GridPosition } from "../core/types";
 import { World } from "../core/World";
 import { RESOURCE_ITEM_IDS, type ResourceItemId } from "../data/items";
 import { isConveyorNode } from "../entities/Conveyor";
@@ -21,6 +21,19 @@ interface ResourceBatch {
   core: InstancedBatch;
 }
 
+export interface PlacementPreviewState {
+  x: number;
+  y: number;
+  kind: "belt" | "router" | "machine";
+  direction: Direction;
+  canPlace: boolean;
+}
+
+interface PreviewMaterialState {
+  material: THREE.MeshBasicMaterial;
+  baseColor: THREE.Color;
+}
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
 
@@ -31,6 +44,7 @@ export class Renderer {
   private readonly staticLayer = new THREE.Group();
   private readonly resourceLayer = new THREE.Group();
   private readonly buildingLayer = new THREE.Group();
+  private readonly previewLayer = new THREE.Group();
   private readonly itemLayer = new THREE.Group();
   private readonly playerLayer = new THREE.Group();
 
@@ -41,6 +55,14 @@ export class Renderer {
   private readonly itemNodes = new Map<string, THREE.Mesh>();
   private readonly itemTypes = new Map<string, string>();
   private playerNode: THREE.Object3D | null = null;
+  private placementPreview: PlacementPreviewState | null = null;
+  private previewNode: THREE.Object3D | null = null;
+  private previewKind: "belt" | "router" | "machine" | null = null;
+  private previewMaterialStates: PreviewMaterialState[] = [];
+  private readonly previewTile: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private readonly previewTileBorder: THREE.LineLoop<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private readonly previewValidColor = new THREE.Color(0x52d88a);
+  private readonly previewInvalidColor = new THREE.Color(0xff6b6b);
 
   private readonly world: World;
   private readonly matrixPosition = new THREE.Vector3();
@@ -59,9 +81,41 @@ export class Renderer {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x161b22);
-    this.scene.add(this.staticLayer, this.resourceLayer, this.buildingLayer, this.itemLayer, this.playerLayer);
+    this.scene.add(this.staticLayer, this.resourceLayer, this.buildingLayer, this.previewLayer, this.itemLayer, this.playerLayer);
     this.staticLayer.add(MeshFactory.createGrid(world.width, world.height));
     this.rebuildResourceBatches(256);
+
+    this.previewTile = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.96, 0.96),
+      new THREE.MeshBasicMaterial({
+        color: this.previewValidColor,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      })
+    );
+    this.previewTile.position.set(0, 0, 0.03);
+    this.previewTile.visible = false;
+    this.previewLayer.add(this.previewTile);
+
+    const previewBorderGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-0.48, -0.48, 0),
+      new THREE.Vector3(0.48, -0.48, 0),
+      new THREE.Vector3(0.48, 0.48, 0),
+      new THREE.Vector3(-0.48, 0.48, 0),
+    ]);
+    this.previewTileBorder = new THREE.LineLoop(
+      previewBorderGeometry,
+      new THREE.LineBasicMaterial({
+        color: this.previewValidColor,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    this.previewTileBorder.position.set(0, 0, 0.035);
+    this.previewTileBorder.visible = false;
+    this.previewLayer.add(this.previewTileBorder);
 
     this.cameraController = new CameraController(world.width, world.height, initialViewHeight);
 
@@ -82,15 +136,25 @@ export class Renderer {
     const visibleBounds = this.getVisibleGridBounds(1);
     this.syncResources(world, visibleBounds);
     this.syncBuildings(world, visibleBounds);
+    this.syncPlacementPreview();
     this.syncItems(world, visibleBounds);
     this.syncPlayer(player);
     this.webgl.render(this.scene, this.cameraController.camera);
   }
 
   dispose(): void {
+    this.clearPlacementPreviewNode();
+    this.previewTile.geometry.dispose();
+    this.previewTile.material.dispose();
+    this.previewTileBorder.geometry.dispose();
+    this.previewTileBorder.material.dispose();
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.webgl.dispose();
     this.canvas.remove();
+  }
+
+  setPlacementPreview(preview: PlacementPreviewState | null): void {
+    this.placementPreview = preview;
   }
 
   zoomCamera(multiplier: number): void {
@@ -229,6 +293,55 @@ export class Renderer {
     }
   }
 
+  private syncPlacementPreview(): void {
+    const preview = this.placementPreview;
+    if (!preview) {
+      this.previewTile.visible = false;
+      this.previewTileBorder.visible = false;
+      if (this.previewNode) {
+        this.previewNode.visible = false;
+      }
+      return;
+    }
+
+    if (!this.previewNode || this.previewKind !== preview.kind) {
+      this.clearPlacementPreviewNode();
+      this.previewNode = this.createPlacementPreviewNode(preview.kind, preview.direction);
+      this.previewKind = preview.kind;
+      this.preparePreviewMaterials(this.previewNode);
+      this.previewLayer.add(this.previewNode);
+    }
+
+    if (!this.previewNode) {
+      return;
+    }
+
+    const worldPosition = this.gridToWorld(preview.x, preview.y);
+    this.previewNode.visible = true;
+    this.previewNode.position.set(worldPosition.x, worldPosition.y, 0.04);
+
+    if (preview.kind === "belt") {
+      MeshFactory.setBeltDirection(this.previewNode, preview.direction);
+    } else if (preview.kind === "router") {
+      MeshFactory.setRouterDirection(this.previewNode, preview.direction);
+    } else {
+      MeshFactory.setMachineDirection(this.previewNode, preview.direction);
+    }
+
+    const tint = preview.canPlace ? this.previewValidColor : this.previewInvalidColor;
+    this.applyPreviewTint(tint);
+
+    this.previewTile.visible = true;
+    this.previewTile.position.set(worldPosition.x, worldPosition.y, 0.03);
+    this.previewTile.material.color.copy(tint);
+    this.previewTile.material.opacity = preview.canPlace ? 0.2 : 0.28;
+
+    this.previewTileBorder.visible = true;
+    this.previewTileBorder.position.set(worldPosition.x, worldPosition.y, 0.035);
+    this.previewTileBorder.material.color.copy(tint);
+    this.previewTileBorder.material.opacity = preview.canPlace ? 0.82 : 0.9;
+  }
+
   private syncItems(world: World, bounds: VisibleGridBounds): void {
     const seenUids = new Set<string>();
 
@@ -284,6 +397,83 @@ export class Renderer {
         this.itemTypes.delete(uid);
       }
     }
+  }
+
+  private createPlacementPreviewNode(
+    kind: "belt" | "router" | "machine",
+    direction: Direction
+  ): THREE.Object3D {
+    if (kind === "belt") {
+      return MeshFactory.createBelt(direction);
+    }
+    if (kind === "router") {
+      return MeshFactory.createRouter(direction);
+    }
+    return MeshFactory.createMachine(direction);
+  }
+
+  private preparePreviewMaterials(node: THREE.Object3D): void {
+    this.previewMaterialStates = [];
+    node.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+
+      if (Array.isArray(child.material)) {
+        child.material = child.material.map((material) => this.clonePreviewMaterial(material));
+        return;
+      }
+
+      child.material = this.clonePreviewMaterial(child.material);
+    });
+  }
+
+  private clonePreviewMaterial(material: THREE.Material): THREE.Material {
+    const cloned = material.clone();
+    if (cloned instanceof THREE.MeshBasicMaterial) {
+      cloned.transparent = true;
+      cloned.opacity = 0.74;
+      cloned.depthWrite = false;
+      this.previewMaterialStates.push({
+        material: cloned,
+        baseColor: cloned.color.clone(),
+      });
+    }
+    return cloned;
+  }
+
+  private applyPreviewTint(tint: THREE.Color): void {
+    for (const state of this.previewMaterialStates) {
+      state.material.color.copy(state.baseColor).lerp(tint, 0.58);
+      state.material.needsUpdate = true;
+    }
+  }
+
+  private clearPlacementPreviewNode(): void {
+    if (!this.previewNode) {
+      this.previewKind = null;
+      this.previewMaterialStates = [];
+      return;
+    }
+
+    this.previewLayer.remove(this.previewNode);
+    this.disposePreviewNodeMaterials(this.previewNode);
+    this.previewNode = null;
+    this.previewKind = null;
+    this.previewMaterialStates = [];
+  }
+
+  private disposePreviewNodeMaterials(node: THREE.Object3D): void {
+    node.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        material.dispose();
+      }
+    });
   }
 
   private syncPlayer(player: Player | undefined): void {

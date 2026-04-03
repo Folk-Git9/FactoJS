@@ -119,7 +119,13 @@ export class PlayerInventory {
     return this.moveSectionToFirstAvailable("backpack", index, "hotbar");
   }
 
-  moveStack(fromSection: InventorySection, fromIndex: number, toSection: InventorySection, toIndex: number): boolean {
+  moveStack(
+    fromSection: InventorySection,
+    fromIndex: number,
+    toSection: InventorySection,
+    toIndex: number,
+    amount?: number
+  ): boolean {
     const fromSlots = this.getSectionSlots(fromSection);
     const toSlots = this.getSectionSlots(toSection);
     if (!fromSlots || !toSlots) {
@@ -137,17 +143,37 @@ export class PlayerInventory {
       return false;
     }
 
+    const requestedAmount = amount === undefined ? source.count : Math.floor(amount);
+    if (requestedAmount <= 0) {
+      return false;
+    }
+    const movedAmount = Math.min(source.count, requestedAmount);
+    const isFullMove = movedAmount === source.count;
+
     const target = toSlots[toIndex];
     if (!target) {
-      fromSlots[fromIndex] = null;
-      toSlots[toIndex] = source;
+      toSlots[toIndex] = {
+        itemId: source.itemId,
+        count: movedAmount,
+      };
+      source.count -= movedAmount;
+      if (source.count <= 0) {
+        fromSlots[fromIndex] = null;
+      }
       return true;
     }
 
     if (target.itemId === source.itemId) {
-      target.count += source.count;
-      fromSlots[fromIndex] = null;
+      target.count += movedAmount;
+      source.count -= movedAmount;
+      if (source.count <= 0) {
+        fromSlots[fromIndex] = null;
+      }
       return true;
+    }
+
+    if (!isFullMove) {
+      return false;
     }
 
     fromSlots[fromIndex] = target;

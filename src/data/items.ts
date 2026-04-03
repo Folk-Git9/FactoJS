@@ -4,7 +4,9 @@ export type ItemId =
   | "stone"
   | "coal_ore"
   | "belt_item"
-  | "furnace_item";
+  | "furnace_item"
+  | "router_item"
+  | "drill_item";
 
 export interface ItemDefinition {
   id: ItemId;
@@ -38,6 +40,16 @@ export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
     name: "Stone Furnace",
     color: 0xb8743b,
   },
+  router_item: {
+    id: "router_item",
+    name: "Router",
+    color: 0x17a2b8,
+  },
+  drill_item: {
+    id: "drill_item",
+    name: "Burner Drill",
+    color: 0x5a9f56,
+  },
   iron_plate: {
     id: "iron_plate",
     name: "Iron Plate",
@@ -46,13 +58,13 @@ export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
 };
 
 export type ResourceItemId = "stone" | "iron_ore" | "coal_ore";
-export type PlaceableItemId = "belt_item" | "furnace_item";
+export type PlaceableItemId = "belt_item" | "furnace_item" | "router_item" | "drill_item";
 
 export const RESOURCE_ITEM_IDS: ResourceItemId[] = ["stone", "iron_ore", "coal_ore"];
-export const PLACEABLE_ITEM_IDS: PlaceableItemId[] = ["belt_item", "furnace_item"];
+export const PLACEABLE_ITEM_IDS: PlaceableItemId[] = ["belt_item", "furnace_item", "router_item", "drill_item"];
 
 export const getItemDefinition = (itemId: ItemId): ItemDefinition => ITEM_DEFINITIONS[itemId];
 
 export const isPlaceableItemId = (itemId: ItemId): itemId is PlaceableItemId => {
-  return itemId === "belt_item" || itemId === "furnace_item";
+  return itemId === "belt_item" || itemId === "furnace_item" || itemId === "router_item" || itemId === "drill_item";
 };
