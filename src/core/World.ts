@@ -1,4 +1,5 @@
 import { Belt } from "../entities/Belt";
+import { Container } from "../entities/Container";
 import { Drill } from "../entities/Drill";
 import { isConveyorNode } from "../entities/Conveyor";
 import { Furnace } from "../entities/Furnace";
@@ -120,9 +121,21 @@ export class World {
       return null;
     }
 
-    const drill = new Drill(direction, () => this.mineResourceAt(x, y, 1));
+    const initialResourceType = tile.resource?.type ?? null;
+    const drill = new Drill(direction, () => this.mineResourceAt(x, y, 1), initialResourceType);
     tile.building = drill;
     return drill;
+  }
+
+  placeContainer(x: number, y: number): Container | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    const container = new Container();
+    tile.building = container;
+    return container;
   }
 
   clearBuilding(x: number, y: number): void {
@@ -192,6 +205,8 @@ export class World {
     const area = this.width * this.height;
     const rng = this.createRng((this.width * 73856093) ^ (this.height * 19349663));
 
+    const amplifier = 100;
+
     const configs: Array<{
       type: ResourceItemId;
       patches: number;
@@ -205,24 +220,24 @@ export class World {
         patches: Math.max(10, Math.floor(area / 2400)),
         minRadius: 3,
         maxRadius: 8,
-        minAmount: 10,
-        maxAmount: 34,
+        minAmount: 10 * amplifier,
+        maxAmount: 34 * amplifier,
       },
       {
         type: "iron_ore",
         patches: Math.max(14, Math.floor(area / 1800)),
         minRadius: 4,
         maxRadius: 10,
-        minAmount: 14,
-        maxAmount: 44,
+        minAmount: 14 * amplifier,
+        maxAmount: 44 * amplifier,
       },
       {
         type: "coal_ore",
         patches: Math.max(10, Math.floor(area / 2200)),
         minRadius: 3,
         maxRadius: 9,
-        minAmount: 12,
-        maxAmount: 40,
+        minAmount: 12 * amplifier,
+        maxAmount: 40 * amplifier,
       },
     ];
 
@@ -246,9 +261,9 @@ export class World {
 
     const centerX = Math.floor(this.width / 2);
     const centerY = Math.floor(this.height / 2);
-    this.applyResourcePatch(centerX - 6, centerY + 2, 4, "stone", 12, 30, rng);
-    this.applyResourcePatch(centerX + 4, centerY - 3, 4.5, "iron_ore", 14, 36, rng);
-    this.applyResourcePatch(centerX + 8, centerY + 4, 4, "coal_ore", 12, 34, rng);
+    this.applyResourcePatch(centerX - 6, centerY + 2, 4, "stone", 12 * amplifier, 30 * amplifier, rng);
+    this.applyResourcePatch(centerX + 4, centerY - 3, 4.5, "iron_ore", 14 * amplifier, 36 * amplifier, rng);
+    this.applyResourcePatch(centerX + 8, centerY + 4, 4, "coal_ore", 12 * amplifier, 34 * amplifier, rng);
   }
 
   private applyResourcePatch(

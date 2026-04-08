@@ -1,4 +1,6 @@
 import { MouseInput, type GridPointerEvent } from "../input/Mouse";
+import { Container } from "../entities/Container";
+import { Drill } from "../entities/Drill";
 import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
 import { isMachine } from "../entities/Machine";
@@ -16,6 +18,7 @@ import {
 } from "../data/crafting";
 import { getItemDefinition, type ItemId } from "../data/items";
 import { HUD, type InventoryTransferRequest, type MachineGuiActionRequest, type MachineTransferMode } from "../ui/HUD";
+import { ContainerGui, type ContainerTakeSlotRequest } from "../ui/ContainerGui";
 import { TickSystem } from "./TickSystem";
 import { World } from "./World";
 
@@ -33,7 +36,7 @@ interface ActiveCraftTask {
 interface OpenMachineGuiTarget {
   x: number;
   y: number;
-  machineType: "furnace";
+  machineType: "furnace" | "drill" | "container";
 }
 
 export class Game {
@@ -46,12 +49,16 @@ export class Game {
 
   private readonly renderer: Renderer;
   private readonly hud: HUD;
+  private readonly containerGui: ContainerGui;
   private readonly mouse: MouseInput;
   private readonly miningInput: MiningInputSystem;
   private readonly placementInput: PlacementInputSystem;
   private readonly unsubscribeInventoryTransfer: () => void;
   private readonly unsubscribeCraftRequest: () => void;
   private readonly unsubscribeMachineGuiAction: () => void;
+  private readonly unsubscribeContainerTakeSlot: () => void;
+  private readonly unsubscribeContainerCraftRequest: () => void;
+  private readonly unsubscribeContainerClose: () => void;
   private readonly unsubscribeMachinePointer: () => void;
   private readonly craftQueue: CraftRecipe[] = [];
   private activeCraft: ActiveCraftTask | null = null;
@@ -83,7 +90,7 @@ export class Game {
 
     if (key === "tab") {
       event.preventDefault();
-      if (this.hud.isMachineGuiOpen()) {
+      if (this.hud.isMachineGuiOpen() || this.containerGui.isOpen()) {
         this.closeMachineGui();
       }
       const inventoryOpen = this.hud.toggleInventory();
@@ -94,7 +101,7 @@ export class Game {
       return;
     }
 
-    if (key === "escape" && this.hud.isMachineGuiOpen()) {
+    if (key === "escape" && (this.hud.isMachineGuiOpen() || this.containerGui.isOpen())) {
       event.preventDefault();
       this.closeMachineGui();
       return;
@@ -180,35 +187,111 @@ export class Game {
       return;
     }
 
-    const furnace = this.getOpenFurnace();
-    if (!furnace) {
+    const target = this.openMachineGuiTarget;
+    if (!target) {
       this.closeMachineGui();
       return;
     }
 
-    if (request.action === "insert_ore") {
-      const available = this.player.inventory.getCount("iron_ore");
-      const amount = this.resolveMachineTransferAmount(available, request.mode);
-      this.transferInventoryToFurnaceInput(furnace, "iron_ore", amount);
-    } else if (request.action === "take_ore") {
-      const stored = furnace.debugState.oreCount;
-      const amount = this.resolveMachineTransferAmount(stored, request.mode);
-      this.transferFurnaceOreToInventory(furnace, amount);
-    } else if (request.action === "insert_fuel") {
-      const available = this.player.inventory.getCount("coal_ore");
-      const amount = this.resolveMachineTransferAmount(available, request.mode);
-      this.transferInventoryToFurnaceInput(furnace, "coal_ore", amount);
-    } else if (request.action === "take_fuel") {
-      const stored = furnace.debugState.fuelCount;
-      const amount = this.resolveMachineTransferAmount(stored, request.mode);
-      this.transferFurnaceFuelToInventory(furnace, amount);
-    } else if (request.action === "take_output") {
-      const outputCount = furnace.debugState.outputCount;
-      const amount = this.resolveMachineTransferAmount(outputCount, request.mode);
-      this.transferFurnaceOutputToInventory(furnace, amount);
+    if (target.machineType === "furnace") {
+      const furnace = this.getOpenFurnace();
+      if (!furnace) {
+        this.closeMachineGui();
+        return;
+      }
+
+      if (request.action === "insert_ore") {
+        const available = this.player.inventory.getCount("iron_ore");
+        const amount = this.resolveMachineTransferAmount(available, request.mode);
+        this.transferInventoryToFurnaceInput(furnace, "iron_ore", amount);
+      } else if (request.action === "take_ore") {
+        const stored = furnace.debugState.oreCount;
+        const amount = this.resolveMachineTransferAmount(stored, request.mode);
+        this.transferFurnaceOreToInventory(furnace, amount);
+      } else if (request.action === "insert_fuel") {
+        const available = this.player.inventory.getCount("coal_ore");
+        const amount = this.resolveMachineTransferAmount(available, request.mode);
+        this.transferInventoryToFurnaceInput(furnace, "coal_ore", amount);
+      } else if (request.action === "take_fuel") {
+        const stored = furnace.debugState.fuelCount;
+        const amount = this.resolveMachineTransferAmount(stored, request.mode);
+        this.transferFurnaceFuelToInventory(furnace, amount);
+      } else if (request.action === "take_output") {
+        const outputCount = furnace.debugState.outputCount;
+        const amount = this.resolveMachineTransferAmount(outputCount, request.mode);
+        this.transferFurnaceOutputToInventory(furnace, amount);
+      }
+    } else if (target.machineType === "drill") {
+      const drill = this.getOpenDrill();
+      if (!drill) {
+        this.closeMachineGui();
+        return;
+      }
+
+      if (request.action === "insert_fuel") {
+        const available = this.player.inventory.getCount("coal_ore");
+        const amount = this.resolveMachineTransferAmount(available, request.mode);
+        this.transferInventoryToDrillFuel(drill, amount);
+      } else if (request.action === "take_fuel") {
+        const stored = drill.debugState.fuelCount;
+        const amount = this.resolveMachineTransferAmount(stored, request.mode);
+        this.transferDrillFuelToInventory(drill, amount);
+      } else if (request.action === "take_output") {
+        const outputCount = drill.debugState.outputCount;
+        const amount = this.resolveMachineTransferAmount(outputCount, request.mode);
+        this.transferDrillOutputToInventory(drill, amount);
+      }
     }
 
     this.syncMachineGui();
+    this.updateHud();
+  };
+
+  private readonly onContainerTakeSlot = (request: ContainerTakeSlotRequest): void => {
+    const container = this.getOpenContainer();
+    if (!container) {
+      this.closeMachineGui();
+      return;
+    }
+
+    const slot = container.getSlot(request.slotIndex);
+    if (!slot) {
+      return;
+    }
+
+    const amount = this.resolveMachineTransferAmount(slot.count, request.mode);
+    const extracted = container.takeFromSlot(request.slotIndex, amount);
+    if (!extracted) {
+      return;
+    }
+
+    this.player.inventory.add(extracted.itemId, extracted.count);
+    this.syncMachineGui();
+    this.updateHud();
+  };
+
+  private readonly onContainerCraftRequest = (recipeId: string): void => {
+    const container = this.getOpenContainer();
+    if (!container) {
+      return;
+    }
+
+    const recipe = CRAFT_RECIPES.find((entry) => entry.id === recipeId);
+    if (!recipe) {
+      return;
+    }
+
+    const crafted = container.tryCraft(recipe.input, recipe.output.item, recipe.output.count);
+    if (!crafted) {
+      return;
+    }
+
+    this.syncMachineGui();
+    this.updateHud();
+  };
+
+  private readonly onContainerClose = (): void => {
+    this.closeMachineGui();
     this.updateHud();
   };
 
@@ -222,11 +305,15 @@ export class Game {
       return;
     }
 
-    if (tile.building.machineType === "furnace") {
+    if (
+      tile.building.machineType === "furnace" ||
+      tile.building.machineType === "drill" ||
+      tile.building.machineType === "container"
+    ) {
       this.openMachineGuiTarget = {
         x: event.position.x,
         y: event.position.y,
-        machineType: "furnace",
+        machineType: tile.building.machineType,
       };
       this.syncMachineGui();
       this.updateHud();
@@ -296,9 +383,13 @@ export class Game {
 
     this.renderer = new Renderer(host, this.world);
     this.hud = new HUD(host);
+    this.containerGui = new ContainerGui(host);
     this.unsubscribeInventoryTransfer = this.hud.onInventoryTransfer(this.onInventoryTransfer);
     this.unsubscribeCraftRequest = this.hud.onCraftRequest(this.onCraftRequest);
     this.unsubscribeMachineGuiAction = this.hud.onMachineGuiAction(this.onMachineGuiAction);
+    this.unsubscribeContainerTakeSlot = this.containerGui.onTakeSlot(this.onContainerTakeSlot);
+    this.unsubscribeContainerCraftRequest = this.containerGui.onCraftRequest(this.onContainerCraftRequest);
+    this.unsubscribeContainerClose = this.containerGui.onClose(this.onContainerClose);
     this.mouse = new MouseInput(this.renderer.canvas, (x, y) => this.renderer.screenToGrid(x, y));
     this.miningInput = new MiningInputSystem(
       this.world,
@@ -351,10 +442,14 @@ export class Game {
     this.unsubscribeInventoryTransfer();
     this.unsubscribeCraftRequest();
     this.unsubscribeMachineGuiAction();
+    this.unsubscribeContainerTakeSlot();
+    this.unsubscribeContainerCraftRequest();
+    this.unsubscribeContainerClose();
     this.unsubscribeMachinePointer();
     this.miningInput.dispose();
     this.placementInput.dispose();
     this.mouse.dispose();
+    this.containerGui.dispose();
     this.hud.dispose();
     this.renderer.dispose();
   }
@@ -417,7 +512,7 @@ export class Game {
   }
 
   private isAnyMenuOpen(): boolean {
-    return this.hud.isInventoryOpen() || this.hud.isMachineGuiOpen();
+    return this.hud.isInventoryOpen() || this.hud.isMachineGuiOpen() || this.containerGui.isOpen();
   }
 
   private isWorldInputEnabled(): boolean {
@@ -678,6 +773,54 @@ export class Game {
     return moved;
   }
 
+  private transferInventoryToDrillFuel(drill: Drill, amount: number): number {
+    const attempts = Math.max(0, Math.floor(amount));
+    let moved = 0;
+    for (let i = 0; i < attempts; i += 1) {
+      if (!drill.canAcceptInput("coal_ore", "up")) {
+        break;
+      }
+      if (!this.player.inventory.remove("coal_ore", 1)) {
+        break;
+      }
+      const accepted = drill.acceptInput(new Item("coal_ore"), "up");
+      if (!accepted) {
+        this.player.inventory.add("coal_ore", 1);
+        break;
+      }
+      moved += 1;
+    }
+    return moved;
+  }
+
+  private transferDrillFuelToInventory(drill: Drill, amount: number): number {
+    const attempts = Math.max(0, Math.floor(amount));
+    let moved = 0;
+    for (let i = 0; i < attempts; i += 1) {
+      const fuel = drill.takeFuelItem();
+      if (!fuel) {
+        break;
+      }
+      this.player.inventory.addItem(fuel);
+      moved += 1;
+    }
+    return moved;
+  }
+
+  private transferDrillOutputToInventory(drill: Drill, amount: number): number {
+    const attempts = Math.max(0, Math.floor(amount));
+    let moved = 0;
+    for (let i = 0; i < attempts; i += 1) {
+      const output = drill.takeOutputItem();
+      if (!output) {
+        break;
+      }
+      this.player.inventory.addItem(output);
+      moved += 1;
+    }
+    return moved;
+  }
+
   private getOpenFurnace(): Furnace | null {
     const target = this.openMachineGuiTarget;
     if (!target || target.machineType !== "furnace") {
@@ -690,34 +833,118 @@ export class Game {
     return tile.building as Furnace;
   }
 
+  private getOpenDrill(): Drill | null {
+    const target = this.openMachineGuiTarget;
+    if (!target || target.machineType !== "drill") {
+      return null;
+    }
+    const tile = this.world.getTile(target.x, target.y);
+    if (!tile?.building || !isMachine(tile.building) || tile.building.machineType !== "drill") {
+      return null;
+    }
+    return tile.building as Drill;
+  }
+
+  private getOpenContainer(): Container | null {
+    const target = this.openMachineGuiTarget;
+    if (!target || target.machineType !== "container") {
+      return null;
+    }
+    const tile = this.world.getTile(target.x, target.y);
+    if (!tile?.building || !isMachine(tile.building) || tile.building.machineType !== "container") {
+      return null;
+    }
+    return tile.building as Container;
+  }
+
   private syncMachineGui(): void {
-    const furnace = this.getOpenFurnace();
-    if (!furnace || !this.openMachineGuiTarget) {
-      if (this.openMachineGuiTarget) {
-        this.closeMachineGui();
-      } else {
-        this.hud.setFurnaceGui(null);
-      }
+    const target = this.openMachineGuiTarget;
+    if (!target) {
+      this.hud.setFurnaceGui(null);
+      this.hud.setDrillGui(null);
+      this.containerGui.setView(null);
       return;
     }
 
-    const state = furnace.debugState;
-    this.hud.setFurnaceGui({
-      gridX: this.openMachineGuiTarget.x,
-      gridY: this.openMachineGuiTarget.y,
-      oreCount: state.oreCount,
-      oreCapacity: state.oreCapacity,
-      fuelCount: state.fuelCount,
-      fuelCapacity: state.fuelCapacity,
-      outputCount: state.outputCount,
-      outputCapacity: state.outputCapacity,
-      progress01: state.progress01,
+    if (target.machineType === "furnace") {
+      const furnace = this.getOpenFurnace();
+      if (!furnace) {
+        this.closeMachineGui();
+        return;
+      }
+
+      const state = furnace.debugState;
+      this.hud.setDrillGui(null);
+      this.containerGui.setView(null);
+      this.hud.setFurnaceGui({
+        gridX: target.x,
+        gridY: target.y,
+        oreCount: state.oreCount,
+        oreCapacity: state.oreCapacity,
+        fuelCount: state.fuelCount,
+        fuelCapacity: state.fuelCapacity,
+        outputCount: state.outputCount,
+        outputCapacity: state.outputCapacity,
+        progress01: state.progress01,
+      });
+      return;
+    }
+
+    if (target.machineType === "drill") {
+      const drill = this.getOpenDrill();
+      if (!drill) {
+        this.closeMachineGui();
+        return;
+      }
+
+      const state = drill.debugState;
+      this.hud.setFurnaceGui(null);
+      this.containerGui.setView(null);
+      this.hud.setDrillGui({
+        gridX: target.x,
+        gridY: target.y,
+        resourceType: state.resourceType,
+        fuelCount: state.fuelCount,
+        fuelCapacity: state.fuelCapacity,
+        outputCount: state.outputCount,
+        outputCapacity: state.outputCapacity,
+        progress01: state.progress01,
+      });
+      return;
+    }
+
+    const container = this.getOpenContainer();
+    if (!container) {
+      this.closeMachineGui();
+      return;
+    }
+
+    const state = container.debugState;
+    this.hud.setFurnaceGui(null);
+    this.hud.setDrillGui(null);
+    this.containerGui.setView({
+      gridX: target.x,
+      gridY: target.y,
+      slots: state.slots,
+      maxStackPerSlot: state.maxStackPerSlot,
+      totalCount: state.totalCount,
+      totalCapacity: state.totalCapacity,
     });
+    this.containerGui.setCraftingRecipes(CRAFT_RECIPES.map((recipe) => ({
+      id: recipe.id,
+      title: recipe.name,
+      outputLabel: `Output: ${getItemDefinition(recipe.output.item).name} x${recipe.output.count}`,
+      inputLabel: `Cost: ${this.formatRecipeCost(recipe)}`,
+      craftTimeLabel: "Instant",
+      canCraft: container.canCraft(recipe.input, recipe.output.item, recipe.output.count),
+    })));
   }
 
   private closeMachineGui(): void {
     this.openMachineGuiTarget = null;
     this.hud.setFurnaceGui(null);
+    this.hud.setDrillGui(null);
+    this.containerGui.setView(null);
   }
 
   private updateWorldItemsSnapshot(deltaSeconds: number): void {

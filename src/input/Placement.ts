@@ -136,6 +136,16 @@ export class PlacementInputSystem {
       return;
     }
 
+    if (slot.itemId === "container_item") {
+      if (!this.canPlaceAt(event.position.x, event.position.y, slot.itemId)) {
+        return;
+      }
+      if (this.world.placeContainer(event.position.x, event.position.y)) {
+        this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+      }
+      return;
+    }
+
     if (tile.building && isInputMachine(tile.building)) {
       const inputDirection = this.getInputDirection(event.position.x, event.position.y);
       if (tile.building.canAcceptInput(slot.itemId, inputDirection)) {
@@ -170,6 +180,9 @@ export class PlacementInputSystem {
       return "machine";
     }
     if (itemId === "drill_item") {
+      return "machine";
+    }
+    if (itemId === "container_item") {
       return "machine";
     }
     return null;

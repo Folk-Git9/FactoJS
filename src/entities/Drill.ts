@@ -1,7 +1,9 @@
 import type { Direction } from "../core/types";
 import type { ItemId, ResourceItemId } from "../data/items";
 import { Item } from "./Item";
+import { ItemHandler } from "./ItemHandler";
 import type { InputMachine, ProducerMachine } from "./Machine";
+import { InventorySlotStack } from "./PlayerInventory";
 
 const DEFAULT_MINE_SECONDS = 1.1;
 const DEFAULT_MINES_PER_COAL = 5;
@@ -10,7 +12,16 @@ const DEFAULT_MAX_OUTPUT = 24;
 
 type MineResourceFn = () => ResourceItemId | null;
 
-export class Drill implements ProducerMachine, InputMachine {
+export interface DrillUiState {
+  resourceType: ResourceItemId | null;
+  fuelCount: number;
+  fuelCapacity: number;
+  outputCount: number;
+  outputCapacity: number;
+  progress01: number;
+}
+
+export class Drill implements ProducerMachine, InputMachine, ItemHandler {
   readonly kind = "machine";
   readonly machineType = "drill";
   outputDirection: Direction;
@@ -25,10 +36,12 @@ export class Drill implements ProducerMachine, InputMachine {
   private burnCharges = 0;
   private timerSeconds = 0;
   private readonly outputItems: ItemId[] = [];
+  private resourceType: ResourceItemId | null;
 
   constructor(
     outputDirection: Direction,
     mineResource: MineResourceFn,
+    initialResourceType: ResourceItemId | null = null,
     mineSeconds = DEFAULT_MINE_SECONDS,
     minesPerCoal = DEFAULT_MINES_PER_COAL,
     maxFuel = DEFAULT_MAX_FUEL,
@@ -40,6 +53,33 @@ export class Drill implements ProducerMachine, InputMachine {
     this.minesPerCoal = Math.max(1, minesPerCoal);
     this.maxFuel = Math.max(1, maxFuel);
     this.maxOutput = Math.max(1, maxOutput);
+    this.resourceType = initialResourceType;
+  }
+
+  onPickup(): InventorySlotStack[] | null {
+    if (this.fuelCount <= 0 && this.outputItems.length <= 0)
+        return null;
+
+    const result: InventorySlotStack[] = [];
+
+    if (this.fuelCount > 0) {
+      result.push({itemId: "coal_ore", count: this.fuelCount});
+    }
+    if (this.outputItems.length > 0) {
+      const map: Map<string, number> = new Map();
+
+      for (const stack of this.outputItems) {
+          let count = map.get(stack) ?? 0; // если нет, ставим 0
+          map.set(stack, count + 1);       // увеличиваем на 1
+      }
+      
+      map.forEach((count, stack) => {
+          result.push({ itemId: stack as ItemId, count });
+      });
+
+      return result;
+    }
+    return null;
   }
 
   canAcceptInput(itemType: ItemId, _inputDirection: Direction): boolean {
@@ -78,6 +118,7 @@ export class Drill implements ProducerMachine, InputMachine {
 
       this.timerSeconds -= this.mineSeconds;
       this.burnCharges -= 1;
+      this.resourceType = minedResource;
       this.outputItems.push(minedResource);
       this.ensureFuel();
     }
@@ -93,6 +134,27 @@ export class Drill implements ProducerMachine, InputMachine {
       return null;
     }
     return new Item(next);
+  }
+
+  takeFuelItem(): Item | null {
+    if (this.fuelCount <= 0) {
+      return null;
+    }
+    this.fuelCount -= 1;
+    return new Item("coal_ore");
+  }
+
+  get debugState(): DrillUiState & { burnCharges: number } {
+    const progress01 = this.mineSeconds > 0 ? Math.min(this.timerSeconds / this.mineSeconds, 1) : 0;
+    return {
+      resourceType: this.resourceType,
+      fuelCount: this.fuelCount,
+      fuelCapacity: this.maxFuel,
+      burnCharges: this.burnCharges,
+      outputCount: this.outputItems.length,
+      outputCapacity: this.maxOutput,
+      progress01,
+    };
   }
 
   private ensureFuel(): void {

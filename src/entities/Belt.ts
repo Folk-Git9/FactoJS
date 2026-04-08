@@ -1,8 +1,10 @@
 import { oppositeDirection, type Direction } from "../core/types";
 import type { ConveyorNode } from "./Conveyor";
 import type { Item } from "./Item";
+import { ItemHandler } from "./ItemHandler";
+import { InventorySlotStack } from "./PlayerInventory";
 
-export class Belt implements ConveyorNode {
+export class Belt implements ConveyorNode, ItemHandler {
   readonly kind = "belt";
   direction: Direction;
   speedTilesPerSecond: number;
@@ -16,6 +18,13 @@ export class Belt implements ConveyorNode {
     this.item = null;
     this.progress = 0;
     this.entryDirection = oppositeDirection(direction);
+  }
+
+  onPickup(): InventorySlotStack[] | null {
+    if (this.item) {
+      return [{itemId: this.item.type, count: 1}];
+    }
+    return null;
   }
 
   canAcceptItem(): boolean {

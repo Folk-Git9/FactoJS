@@ -3,7 +3,9 @@ import { World } from "../core/World";
 import { Player } from "../entities/Player";
 import { getItemDefinition, type ItemId } from "../data/items";
 import { isConveyorNode } from "../entities/Conveyor";
+import { Container } from "../entities/Container";
 import { isMachine } from "../entities/Machine";
+import { isItemHandler, ItemHandler } from "../entities/ItemHandler";
 import { PlayerSystem } from "../systems/PlayerSystem";
 import { HUD } from "../ui/HUD";
 import { MouseInput, type GridPointerButtonEvent, type GridPointerEvent } from "./Mouse";
@@ -209,11 +211,28 @@ export class MiningInputSystem {
       return false;
     }
 
+    if (isMachine(tile.building) && tile.building.machineType === "container") {
+      const container = tile.building as Container;
+      const storedStacks = container.clearAndTakeAll();
+      for (const stack of storedStacks) {
+        this.player.inventory.add(stack.itemId, stack.count);
+      }
+    }
+
     const pickupItem = this.getBuildingPickupItem(tile.building);
+    if (isItemHandler(tile.building)) {
+      let inventory = tile.building.onPickup();
+      if (inventory && inventory.length > 0) {
+        for (const stack of inventory) {
+          this.player.inventory.add(stack.itemId,stack.count);
+        }
+      }
+    }
     this.world.clearBuilding(gridX, gridY);
     if (pickupItem) {
       this.player.inventory.add(pickupItem, 1);
     }
+    
     return true;
   }
 
@@ -231,6 +250,9 @@ export class MiningInputSystem {
     }
     if (isMachine(building) && building.machineType === "drill") {
       return "drill_item";
+    }
+    if (isMachine(building) && building.machineType === "container") {
+      return "container_item";
     }
     return null;
   }

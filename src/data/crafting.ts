@@ -1,6 +1,6 @@
 import type { ItemId } from "./items";
 
-export type CraftRecipeId = "craft_furnace" | "craft_belt" | "craft_router" | "craft_drill";
+export type CraftRecipeId = "craft_furnace" | "craft_belt" | "craft_router" | "craft_drill" | "craft_container";
 
 export interface CraftRecipe {
   id: CraftRecipeId;
@@ -60,6 +60,19 @@ export const CRAFT_RECIPES: CraftRecipe[] = [
     },
     output: {
       item: "drill_item",
+      count: 1,
+    },
+  },
+  {
+    id: "craft_container",
+    name: "Container",
+    craftSeconds: 1.8,
+    input: {
+      stone: 8,
+      iron_plate: 2,
+    },
+    output: {
+      item: "container_item",
       count: 1,
     },
   },

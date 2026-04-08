@@ -50,6 +50,17 @@ export interface FurnaceGuiView {
   progress01: number;
 }
 
+export interface DrillGuiView {
+  gridX: number;
+  gridY: number;
+  resourceType: ItemId | null;
+  fuelCount: number;
+  fuelCapacity: number;
+  outputCount: number;
+  outputCapacity: number;
+  progress01: number;
+}
+
 export type MachineTransferMode = "all" | "half" | "single";
 
 export interface MachineGuiActionRequest {
@@ -144,7 +155,7 @@ export class HUD {
   private selectedQuickbarIndex = 0;
   private inventoryOpen = false;
   private machineGuiOpen = false;
-  private machineGuiView: FurnaceGuiView | null = null;
+  private machineGuiView: FurnaceGuiView | DrillGuiView | null = null;
   private readonly onWindowResize = (): void => {
     this.updateActivityAnchor();
   };
@@ -746,6 +757,18 @@ export class HUD {
 
     this.machineTitle.textContent = "Stone Furnace";
     this.machinePositionLine.textContent = `Cell: (${view.gridX}, ${view.gridY})`;
+    this.machineOreSlot.label.textContent = "Ore";
+    this.machineOreSlot.swatch.style.display = "block";
+    this.machineOreSlot.swatch.style.background = this.toCssColor(getItemDefinition("iron_ore").color);
+    this.machineOreSlot.name.textContent = getItemDefinition("iron_ore").name;
+    this.machineFuelSlot.label.textContent = "Fuel";
+    this.machineFuelSlot.swatch.style.display = "block";
+    this.machineFuelSlot.swatch.style.background = this.toCssColor(getItemDefinition("coal_ore").color);
+    this.machineFuelSlot.name.textContent = getItemDefinition("coal_ore").name;
+    this.machineOutputSlot.label.textContent = "Output";
+    this.machineOutputSlot.swatch.style.display = "block";
+    this.machineOutputSlot.swatch.style.background = this.toCssColor(getItemDefinition("iron_plate").color);
+    this.machineOutputSlot.name.textContent = getItemDefinition("iron_plate").name;
     this.machineOreSlot.count.textContent = `${view.oreCount} / ${view.oreCapacity}`;
     this.machineFuelSlot.count.textContent = `${view.fuelCount} / ${view.fuelCapacity}`;
     this.machineOutputSlot.count.textContent = `${view.outputCount} / ${view.outputCapacity}`;
@@ -754,7 +777,54 @@ export class HUD {
     this.machineProgressFill.style.width = `${(progress01 * 100).toFixed(1)}%`;
 
     this.machineOreSlot.root.disabled = false;
+    this.machineOreSlot.root.style.opacity = "1";
     this.machineFuelSlot.root.disabled = false;
+    this.machineFuelSlot.root.style.opacity = "1";
+    this.machineOutputSlot.root.disabled = view.outputCount <= 0;
+    this.machineOutputSlot.root.style.opacity = view.outputCount > 0 ? "1" : "0.6";
+  }
+
+  setDrillGui(view: DrillGuiView | null): void {
+    this.machineGuiView = view;
+    this.machineGuiOpen = view !== null;
+    this.machineOverlay.style.display = this.machineGuiOpen ? "flex" : "none";
+    if (!view) {
+      return;
+    }
+
+    this.machineTitle.textContent = "Burner Drill";
+    this.machinePositionLine.textContent = `Cell: (${view.gridX}, ${view.gridY})`;
+
+    const resourceDefinition = view.resourceType ? getItemDefinition(view.resourceType) : null;
+    this.machineOreSlot.label.textContent = "Deposit";
+    this.machineOreSlot.name.textContent = resourceDefinition?.name ?? "No Resource";
+    this.machineOreSlot.count.textContent = resourceDefinition ? "Connected" : "-";
+    this.machineOreSlot.swatch.style.display = resourceDefinition ? "block" : "none";
+    if (resourceDefinition) {
+      this.machineOreSlot.swatch.style.background = this.toCssColor(resourceDefinition.color);
+    }
+
+    this.machineFuelSlot.label.textContent = "Fuel";
+    this.machineFuelSlot.swatch.style.display = "block";
+    this.machineFuelSlot.swatch.style.background = this.toCssColor(getItemDefinition("coal_ore").color);
+    this.machineFuelSlot.name.textContent = getItemDefinition("coal_ore").name;
+    this.machineFuelSlot.count.textContent = `${view.fuelCount} / ${view.fuelCapacity}`;
+
+    const outputDefinition = resourceDefinition ?? getItemDefinition("stone");
+    this.machineOutputSlot.label.textContent = "Output";
+    this.machineOutputSlot.swatch.style.display = "block";
+    this.machineOutputSlot.swatch.style.background = this.toCssColor(outputDefinition.color);
+    this.machineOutputSlot.name.textContent = outputDefinition.name;
+    this.machineOutputSlot.count.textContent = `${view.outputCount} / ${view.outputCapacity}`;
+
+    const progress01 = Math.min(Math.max(view.progress01, 0), 1);
+    this.machineProgressLine.textContent = `Mine Progress: ${Math.round(progress01 * 100)}%`;
+    this.machineProgressFill.style.width = `${(progress01 * 100).toFixed(1)}%`;
+
+    this.machineOreSlot.root.disabled = true;
+    this.machineOreSlot.root.style.opacity = "0.55";
+    this.machineFuelSlot.root.disabled = false;
+    this.machineFuelSlot.root.style.opacity = "1";
     this.machineOutputSlot.root.disabled = view.outputCount <= 0;
     this.machineOutputSlot.root.style.opacity = view.outputCount > 0 ? "1" : "0.6";
   }

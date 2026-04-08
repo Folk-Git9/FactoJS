@@ -1,7 +1,9 @@
 import type { Direction } from "../core/types";
 import type { ItemId } from "../data/items";
 import { Item } from "./Item";
+import { ItemHandler } from "./ItemHandler";
 import type { InputMachine, ProducerMachine } from "./Machine";
+import { InventorySlotStack } from "./PlayerInventory";
 
 const DEFAULT_SMELT_SECONDS = 1.6;
 const DEFAULT_SMELTS_PER_COAL = 4;
@@ -23,7 +25,7 @@ export interface FurnaceUiState {
   progress01: number;
 }
 
-export class Furnace implements ProducerMachine, InputMachine {
+export class Furnace implements ProducerMachine, InputMachine, ItemHandler {
   readonly kind = "machine";
   readonly machineType = "furnace";
   outputDirection: Direction;
@@ -118,6 +120,26 @@ export class Furnace implements ProducerMachine, InputMachine {
     }
     this.outputCount -= 1;
     return new Item("iron_plate");
+  }
+
+  onPickup(): InventorySlotStack[] | null {
+    if (this.fuelCount <= 0 && this.oreInputCount <= 0 && this.outputCount <= 0)
+      return null;
+    const output: InventorySlotStack[] = [];
+
+    if (this.fuelCount > 0) {
+      output.push({ itemId: "coal_ore", count: this.fuelCount });
+    }
+
+    if (this.oreInputCount > 0) {
+      output.push({ itemId: "iron_ore", count: this.oreInputCount });
+    }
+
+    if (this.outputCount > 0) {
+      output.push({ itemId: "iron_plate", count: this.outputCount });
+    }
+
+    return output;
   }
 
   takeOreItem(): Item | null {
