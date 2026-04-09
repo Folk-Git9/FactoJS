@@ -25,7 +25,14 @@ const RESOURCE_CORE_GEOMETRY = new THREE.CircleGeometry(0.26, 10);
 
 const BELT_BASE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xf5a524 });
 const BELT_ARROW_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x1f2329 });
-const MACHINE_BASE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x4e6479 });
+const MACHINE_BASE_MATERIALS: Record<string, THREE.MeshBasicMaterial> = {
+  default: new THREE.MeshBasicMaterial({ color: 0x4e6479 }),
+  furnace: new THREE.MeshBasicMaterial({ color: 0xb8743b }),
+  drill: new THREE.MeshBasicMaterial({ color: 0x5a9f56 }),
+  container: new THREE.MeshBasicMaterial({ color: 0x4e78a9 }),
+  iron_chest: new THREE.MeshBasicMaterial({ color: 0x8ea2b6 }),
+  unloader: new THREE.MeshBasicMaterial({ color: 0xcd9f59 }),
+};
 const MACHINE_PORT_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xe9edf2 });
 const ROUTER_BASE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x17a2b8 });
 const ROUTER_CORE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xe8f4f7 });
@@ -99,10 +106,11 @@ export class MeshFactory {
     arrow.rotation.z = directionToRotationZ(direction);
   }
 
-  static createMachine(direction: Direction): THREE.Group {
+  static createMachine(direction: Direction, machineType = "default"): THREE.Group {
     const group = new THREE.Group();
+    const machineMaterial = MACHINE_BASE_MATERIALS[machineType] ?? MACHINE_BASE_MATERIALS.default;
 
-    const base = new THREE.Mesh(MACHINE_GEOMETRY, MACHINE_BASE_MATERIAL);
+    const base = new THREE.Mesh(MACHINE_GEOMETRY, machineMaterial);
     base.position.set(0, 0, 0);
     group.add(base);
 
@@ -160,14 +168,20 @@ export class MeshFactory {
     return new THREE.Mesh(geometry, material);
   }
 
-  static createPlayer(): THREE.Group {
+  static createPlayer(bodyColor = 0x7dd3fc, coreColor = 0x082f49): THREE.Group {
     const group = new THREE.Group();
+    const bodyMaterial = bodyColor === 0x7dd3fc
+      ? PLAYER_BODY_MATERIAL
+      : new THREE.MeshBasicMaterial({ color: bodyColor });
+    const coreMaterial = coreColor === 0x082f49
+      ? PLAYER_CORE_MATERIAL
+      : new THREE.MeshBasicMaterial({ color: coreColor });
 
-    const body = new THREE.Mesh(PLAYER_BODY_GEOMETRY, PLAYER_BODY_MATERIAL);
+    const body = new THREE.Mesh(PLAYER_BODY_GEOMETRY, bodyMaterial);
     body.position.set(0, 0, 0);
     group.add(body);
 
-    const core = new THREE.Mesh(PLAYER_CORE_GEOMETRY, PLAYER_CORE_MATERIAL);
+    const core = new THREE.Mesh(PLAYER_CORE_GEOMETRY, coreMaterial);
     core.position.set(0, 0, 0.02);
     group.add(core);
 

@@ -1,5 +1,6 @@
 import { World } from "../core/World";
 import { oppositeDirection } from "../core/types";
+import type { Direction } from "../core/types";
 import { isConveyorNode } from "../entities/Conveyor";
 import type { Item } from "../entities/Item";
 import { isInputMachine } from "../entities/Machine";
@@ -51,6 +52,10 @@ export class BeltSystem {
     }
 
     const source = sourceTile.building;
+    const sourceItemType = source.item?.type;
+    if (!sourceItemType) {
+      return;
+    }
     const outputDirections = source.getOutputDirections(source.entryDirection);
     let hasOutOfBoundsOutput = false;
 
@@ -67,6 +72,13 @@ export class BeltSystem {
       }
 
       if (isConveyorNode(nextTile.building) && nextTile.building.canAcceptItem()) {
+        if (
+          nextTile.building.kind === "router" &&
+          !this.hasRouterForwardOutput(world, nextPosition.x, nextPosition.y, outputDirection, sourceItemType)
+        ) {
+          continue;
+        }
+
         source.onItemDispatched?.(outputDirection);
 
         const movedItem = source.releaseItem();
@@ -79,10 +91,6 @@ export class BeltSystem {
       }
 
       if (isInputMachine(nextTile.building)) {
-        const sourceItemType = source.item?.type;
-        if (!sourceItemType) {
-          return;
-        }
         const inputDirection = oppositeDirection(outputDirection);
         if (!nextTile.building.canAcceptInput(sourceItemType, inputDirection)) {
           continue;
@@ -112,5 +120,47 @@ export class BeltSystem {
     }
 
     source.progress = 1;
+  }
+
+  private hasRouterForwardOutput(
+    world: World,
+    routerX: number,
+    routerY: number,
+    entryDirection: Direction,
+    itemType: Item["type"]
+  ): boolean {
+    const routerTile = world.getTile(routerX, routerY);
+    if (!routerTile || !isConveyorNode(routerTile.building) || routerTile.building.kind !== "router") {
+      return true;
+    }
+
+    const outputDirections = routerTile.building.getOutputDirections(entryDirection);
+    for (const outputDirection of outputDirections) {
+      const forwardPosition = world.getNeighborPosition(routerX, routerY, outputDirection);
+      if (!forwardPosition) {
+        continue;
+      }
+
+      const forwardTile = world.getTile(forwardPosition.x, forwardPosition.y);
+      if (!forwardTile?.building) {
+        continue;
+      }
+
+      if (isConveyorNode(forwardTile.building)) {
+        if (forwardTile.building.canAcceptItem()) {
+          return true;
+        }
+        continue;
+      }
+
+      if (isInputMachine(forwardTile.building)) {
+        const inputDirection = oppositeDirection(outputDirection);
+        if (forwardTile.building.canAcceptInput(itemType, inputDirection)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 }

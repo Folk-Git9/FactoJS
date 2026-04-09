@@ -1,5 +1,5 @@
 import type { GridPosition } from "../core/types";
-import { getItemDefinition, type ItemId } from "../data/items";
+import { ITEM_DEFINITIONS, getItemDefinition, type ItemId } from "../data/items";
 import {
   BACKPACK_SLOT_COUNT,
   HOTBAR_SLOT_COUNT,
@@ -15,11 +15,12 @@ export interface HudStats {
 }
 
 export interface InventoryTransferRequest {
-  fromSection: InventorySection;
+  fromSection: InventoryUiSection;
   fromIndex: number;
-  toSection: InventorySection;
+  toSection: InventoryUiSection;
   toIndex: number;
   amount?: number;
+  itemId?: ItemId;
 }
 
 export interface CraftRecipeView {
@@ -29,6 +30,8 @@ export interface CraftRecipeView {
   inputLabel: string;
   craftTimeLabel: string;
   canCraft: boolean;
+  categoryId?: string;
+  categoryLabel?: string;
 }
 
 export interface CraftingStatusView {
@@ -86,6 +89,16 @@ interface CraftRecipeRowView {
   button: HTMLButtonElement;
 }
 
+interface CraftCategoryView {
+  id: string;
+  label: string;
+}
+
+const CRAFT_RECIPES_PER_PAGE = 5;
+const CREATIVE_STACK_AMOUNT = 100;
+
+type InventoryUiSection = InventorySection | "creative" | "trash";
+
 interface MachineSlotView {
   root: HTMLButtonElement;
   label: HTMLDivElement;
@@ -117,10 +130,20 @@ export class HUD {
   private readonly quickbarSlots: InventorySlotView[] = [];
 
   private readonly inventoryOverlay: HTMLDivElement;
+  private readonly inventoryHeaderTitle: HTMLDivElement;
+  private readonly inventoryHeaderHint: HTMLDivElement;
   private readonly inventoryHotbarTitle: HTMLDivElement;
   private readonly inventoryBackpackTitle: HTMLDivElement;
   private readonly inventorySelectionLine: HTMLDivElement;
+  private readonly creativePanel: HTMLDivElement;
+  private readonly creativeTitle: HTMLDivElement;
+  private readonly trashSlot: InventorySlotView;
+  private readonly craftCategoriesRoot: HTMLDivElement;
   private readonly craftRecipesRoot: HTMLDivElement;
+  private readonly craftPaginationRoot: HTMLDivElement;
+  private readonly craftPrevButton: HTMLButtonElement;
+  private readonly craftPageLine: HTMLDivElement;
+  private readonly craftNextButton: HTMLButtonElement;
   private readonly machineOverlay: HTMLDivElement;
   private readonly machineTitle: HTMLDivElement;
   private readonly machinePositionLine: HTMLDivElement;
@@ -133,19 +156,27 @@ export class HUD {
   private readonly machineCloseButton: HTMLButtonElement;
   private readonly inventoryHotbarSlots: InventorySlotView[] = [];
   private readonly inventoryBackpackSlots: InventorySlotView[] = [];
+  private readonly creativeSlots: InventorySlotView[] = [];
+  private readonly creativeItems: ItemId[];
 
   private readonly inventoryTransferListeners: InventoryTransferListener[] = [];
   private readonly craftRequestListeners: CraftRequestListener[] = [];
   private readonly machineGuiActionListeners: MachineGuiActionListener[] = [];
   private readonly craftRows = new Map<string, CraftRecipeRowView>();
+  private readonly craftCategoryButtons = new Map<string, HTMLButtonElement>();
+  private readonly craftPageByCategory = new Map<string, number>();
+  private readonly craftRecipeMap = new Map<string, CraftRecipeView>();
+  private visibleCraftRecipeIds: string[] = [];
+  private craftCategoryOrder: CraftCategoryView[] = [];
+  private selectedCraftCategoryId: string | null = null;
   private miningActivityVisible = false;
   private craftingActivityVisible = false;
 
-  private dragSourceSlot: { section: InventorySection; index: number } | null = null;
-  private dragTargetSlot: { section: InventorySection; index: number } | null = null;
+  private dragSourceSlot: { section: InventoryUiSection; index: number } | null = null;
+  private dragTargetSlot: { section: InventoryUiSection; index: number } | null = null;
   private dragAmount: number | null = null;
   private pendingDragModifiers: {
-    section: InventorySection;
+    section: InventoryUiSection;
     index: number;
     shiftKey: boolean;
     ctrlKey: boolean;
@@ -154,6 +185,7 @@ export class HUD {
   private isCtrlHeld = false;
   private selectedQuickbarIndex = 0;
   private inventoryOpen = false;
+  private creativeMenuOpen = false;
   private machineGuiOpen = false;
   private machineGuiView: FurnaceGuiView | DrillGuiView | null = null;
   private readonly onWindowResize = (): void => {
@@ -361,16 +393,16 @@ export class HUD {
     header.style.paddingBottom = "8px";
     header.style.borderBottom = "1px solid #273646";
 
-    const headerTitle = document.createElement("div");
-    headerTitle.style.font = "14px/1.2 monospace";
-    headerTitle.style.color = "#e4edf7";
-    headerTitle.textContent = "Inventory";
+    this.inventoryHeaderTitle = document.createElement("div");
+    this.inventoryHeaderTitle.style.font = "14px/1.2 monospace";
+    this.inventoryHeaderTitle.style.color = "#e4edf7";
+    this.inventoryHeaderTitle.textContent = "Inventory";
 
-    const headerHint = document.createElement("div");
-    headerHint.style.color = "#9ab0c6";
-    headerHint.textContent = "Drag stacks; Shift+LMB half, Ctrl+LMB one";
+    this.inventoryHeaderHint = document.createElement("div");
+    this.inventoryHeaderHint.style.color = "#9ab0c6";
+    this.inventoryHeaderHint.textContent = "Drag stacks; Shift+LMB half, Ctrl+LMB one";
 
-    header.append(headerTitle, headerHint);
+    header.append(this.inventoryHeaderTitle, this.inventoryHeaderHint);
     inventoryWindow.appendChild(header);
 
     this.inventorySelectionLine = document.createElement("div");
@@ -392,6 +424,7 @@ export class HUD {
     leftPanel.style.gap = "12px";
     leftPanel.style.flex = "1 1 auto";
     content.appendChild(leftPanel);
+    this.creativeItems = Object.keys(ITEM_DEFINITIONS) as ItemId[];
 
     const hotbarBlock = document.createElement("div");
     hotbarBlock.style.border = "1px solid #2b3a4c";
@@ -447,6 +480,70 @@ export class HUD {
       this.inventoryBackpackSlots.push(slot);
     }
 
+    const trashBlock = document.createElement("div");
+    trashBlock.style.border = "1px solid #4d3131";
+    trashBlock.style.borderRadius = "10px";
+    trashBlock.style.padding = "10px";
+    trashBlock.style.background = "rgba(35, 18, 18, 0.68)";
+    leftPanel.appendChild(trashBlock);
+
+    const trashTitle = document.createElement("div");
+    trashTitle.style.color = "#f4b7b7";
+    trashTitle.style.marginBottom = "8px";
+    trashTitle.textContent = "Trash";
+    trashBlock.appendChild(trashTitle);
+
+    this.trashSlot = this.createSlotView(62, 1, false);
+    this.trashSlot.root.dataset.inventorySlot = "1";
+    this.trashSlot.root.dataset.inventorySection = "trash";
+    this.trashSlot.root.dataset.inventoryIndex = "0";
+    this.trashSlot.root.style.cursor = "not-allowed";
+    this.trashSlot.root.style.borderColor = "#a04f4f";
+    this.trashSlot.root.style.background = "rgba(56, 25, 25, 0.92)";
+    this.trashSlot.swatch.style.display = "block";
+    this.trashSlot.swatch.style.background = "#d96a6a";
+    this.trashSlot.name.textContent = "Drop Here";
+    this.trashSlot.count.textContent = "Delete";
+    trashBlock.appendChild(this.trashSlot.root);
+
+    this.creativePanel = document.createElement("div");
+    this.creativePanel.style.flex = "0 0 280px";
+    this.creativePanel.style.display = "none";
+    this.creativePanel.style.flexDirection = "column";
+    this.creativePanel.style.border = "1px solid #2b3a4c";
+    this.creativePanel.style.borderRadius = "10px";
+    this.creativePanel.style.padding = "10px";
+    this.creativePanel.style.background = "rgba(16, 29, 44, 0.86)";
+    content.appendChild(this.creativePanel);
+
+    this.creativeTitle = document.createElement("div");
+    this.creativeTitle.style.color = "#e7f0fa";
+    this.creativeTitle.style.font = "13px/1.2 monospace";
+    this.creativeTitle.style.marginBottom = "8px";
+    this.creativeTitle.textContent = "Creative Supply";
+    this.creativePanel.appendChild(this.creativeTitle);
+
+    const creativeHint = document.createElement("div");
+    creativeHint.style.color = "#9bb0c5";
+    creativeHint.style.marginBottom = "8px";
+    creativeHint.textContent = "Drag to inventory: Ctrl=1, Shift=half, no modifier=stack";
+    this.creativePanel.appendChild(creativeHint);
+
+    const creativeGrid = document.createElement("div");
+    creativeGrid.style.display = "grid";
+    creativeGrid.style.gridTemplateColumns = "repeat(4, minmax(54px, 1fr))";
+    creativeGrid.style.gap = "6px";
+    this.creativePanel.appendChild(creativeGrid);
+
+    for (let i = 0; i < this.creativeItems.length; i += 1) {
+      const itemId = this.creativeItems[i];
+      const slot = this.createSlotView(54, i + 1, true);
+      this.renderCreativeSlot(slot, itemId);
+      this.registerInventoryDragSlot(slot, "creative", i);
+      creativeGrid.appendChild(slot.root);
+      this.creativeSlots.push(slot);
+    }
+
     const craftPanel = document.createElement("div");
     craftPanel.style.flex = "0 0 280px";
     craftPanel.style.display = "flex";
@@ -467,14 +564,75 @@ export class HUD {
     const craftHint = document.createElement("div");
     craftHint.style.color = "#9bb0c5";
     craftHint.style.marginBottom = "8px";
-    craftHint.textContent = "Crafts are queued and processed one by one.";
+    craftHint.textContent = "Sections + pages. Crafts are queued.";
     craftPanel.appendChild(craftHint);
+
+    this.craftCategoriesRoot = document.createElement("div");
+    this.craftCategoriesRoot.style.display = "flex";
+    this.craftCategoriesRoot.style.flexWrap = "wrap";
+    this.craftCategoriesRoot.style.gap = "6px";
+    this.craftCategoriesRoot.style.marginBottom = "8px";
+    craftPanel.appendChild(this.craftCategoriesRoot);
 
     this.craftRecipesRoot = document.createElement("div");
     this.craftRecipesRoot.style.display = "flex";
     this.craftRecipesRoot.style.flexDirection = "column";
     this.craftRecipesRoot.style.gap = "8px";
     craftPanel.appendChild(this.craftRecipesRoot);
+
+    this.craftPaginationRoot = document.createElement("div");
+    this.craftPaginationRoot.style.display = "flex";
+    this.craftPaginationRoot.style.alignItems = "center";
+    this.craftPaginationRoot.style.justifyContent = "space-between";
+    this.craftPaginationRoot.style.gap = "8px";
+    this.craftPaginationRoot.style.marginTop = "8px";
+    craftPanel.appendChild(this.craftPaginationRoot);
+
+    this.craftPrevButton = document.createElement("button");
+    this.craftPrevButton.type = "button";
+    this.craftPrevButton.style.border = "1px solid #3f5062";
+    this.craftPrevButton.style.borderRadius = "6px";
+    this.craftPrevButton.style.background = "#1b2735";
+    this.craftPrevButton.style.color = "#dce8f5";
+    this.craftPrevButton.style.font = "11px/1.2 monospace";
+    this.craftPrevButton.style.padding = "4px 8px";
+    this.craftPrevButton.style.cursor = "pointer";
+    this.craftPrevButton.textContent = "Prev";
+    this.craftPrevButton.addEventListener("click", () => {
+      if (!this.selectedCraftCategoryId) {
+        return;
+      }
+      const current = this.craftPageByCategory.get(this.selectedCraftCategoryId) ?? 0;
+      this.craftPageByCategory.set(this.selectedCraftCategoryId, Math.max(0, current - 1));
+      this.renderCraftRecipes();
+    });
+    this.craftPaginationRoot.appendChild(this.craftPrevButton);
+
+    this.craftPageLine = document.createElement("div");
+    this.craftPageLine.style.color = "#9bb0c5";
+    this.craftPageLine.style.font = "11px/1.2 monospace";
+    this.craftPageLine.textContent = "Page 1 / 1";
+    this.craftPaginationRoot.appendChild(this.craftPageLine);
+
+    this.craftNextButton = document.createElement("button");
+    this.craftNextButton.type = "button";
+    this.craftNextButton.style.border = "1px solid #3f5062";
+    this.craftNextButton.style.borderRadius = "6px";
+    this.craftNextButton.style.background = "#1b2735";
+    this.craftNextButton.style.color = "#dce8f5";
+    this.craftNextButton.style.font = "11px/1.2 monospace";
+    this.craftNextButton.style.padding = "4px 8px";
+    this.craftNextButton.style.cursor = "pointer";
+    this.craftNextButton.textContent = "Next";
+    this.craftNextButton.addEventListener("click", () => {
+      if (!this.selectedCraftCategoryId) {
+        return;
+      }
+      const current = this.craftPageByCategory.get(this.selectedCraftCategoryId) ?? 0;
+      this.craftPageByCategory.set(this.selectedCraftCategoryId, current + 1);
+      this.renderCraftRecipes();
+    });
+    this.craftPaginationRoot.appendChild(this.craftNextButton);
 
     this.inventoryOverlay.addEventListener("click", (event) => {
       if (event.target === this.inventoryOverlay) {
@@ -687,6 +845,7 @@ export class HUD {
     });
 
     parent.appendChild(this.machineOverlay);
+    this.updateInventoryModeUi();
   }
 
   setHoveredCell(position: GridPosition | null): void {
@@ -888,6 +1047,7 @@ export class HUD {
 
   setCraftingRecipes(recipes: CraftRecipeView[]): void {
     const recipeIds = new Set(recipes.map((recipe) => recipe.id));
+    this.craftRecipeMap.clear();
 
     for (const [id, row] of this.craftRows.entries()) {
       if (recipeIds.has(id)) {
@@ -898,18 +1058,31 @@ export class HUD {
     }
 
     for (const recipe of recipes) {
+      this.craftRecipeMap.set(recipe.id, recipe);
+
       let row = this.craftRows.get(recipe.id);
       if (!row) {
         row = this.createCraftRecipeRow(recipe.id);
         this.craftRows.set(recipe.id, row);
-        this.craftRecipesRoot.appendChild(row.root);
       }
 
       row.title.textContent = recipe.title;
       row.details.textContent = `${recipe.outputLabel} | ${recipe.inputLabel} | ${recipe.craftTimeLabel}`;
-      row.button.disabled = !recipe.canCraft;
+      row.button.disabled = false;
       row.button.textContent = recipe.canCraft ? "Craft" : "Need Items";
+      row.button.style.opacity = recipe.canCraft ? "1" : "0.7";
     }
+
+    const categories = this.resolveCraftCategories(recipes);
+    this.craftCategoryOrder = categories;
+    if (categories.length === 0) {
+      this.selectedCraftCategoryId = null;
+    } else if (!this.selectedCraftCategoryId || !categories.some((entry) => entry.id === this.selectedCraftCategoryId)) {
+      this.selectedCraftCategoryId = categories[0]?.id ?? null;
+    }
+
+    this.renderCraftCategoryTabs();
+    this.renderCraftRecipes();
   }
 
   onInventoryTransfer(listener: InventoryTransferListener): () => void {
@@ -936,19 +1109,51 @@ export class HUD {
     return this.inventoryOpen;
   }
 
+  isCreativeMenuOpen(): boolean {
+    return this.inventoryOpen && this.creativeMenuOpen;
+  }
+
   toggleInventory(): boolean {
-    this.setInventoryOpen(!this.inventoryOpen);
+    if (this.inventoryOpen) {
+      this.setInventoryOpen(false);
+    } else {
+      this.creativeMenuOpen = false;
+      this.setInventoryOpen(true);
+    }
     return this.inventoryOpen;
+  }
+
+  toggleCreativeMenu(): boolean {
+    if (this.inventoryOpen && this.creativeMenuOpen) {
+      this.setInventoryOpen(false);
+      return false;
+    }
+    this.creativeMenuOpen = true;
+    this.setInventoryOpen(true);
+    return true;
   }
 
   setInventoryOpen(isOpen: boolean): void {
     this.inventoryOpen = isOpen;
+    if (!isOpen) {
+      this.creativeMenuOpen = false;
+    }
     this.inventoryOverlay.style.display = isOpen ? "flex" : "none";
     if (!isOpen) {
       this.clearDragState();
     } else {
       this.updateDragUi();
     }
+    this.updateInventoryModeUi();
+  }
+
+  private updateInventoryModeUi(): void {
+    const creativeEnabled = this.inventoryOpen && this.creativeMenuOpen;
+    this.creativePanel.style.display = creativeEnabled ? "flex" : "none";
+    this.inventoryHeaderTitle.textContent = creativeEnabled ? "Inventory + Creative" : "Inventory";
+    this.inventoryHeaderHint.textContent = creativeEnabled
+      ? "Drag from Creative panel; Shift=half, Ctrl=one, default=stack"
+      : "Drag stacks; Shift+LMB half, Ctrl+LMB one";
   }
 
   dispose(): void {
@@ -1065,6 +1270,18 @@ export class HUD {
     view.count.textContent = `x${stack.count}`;
   }
 
+  private renderCreativeSlot(view: InventorySlotView, itemId: ItemId): void {
+    const definition = getItemDefinition(itemId);
+    const color = this.toCssColor(definition.color);
+    view.root.style.borderColor = color;
+    view.root.style.background = "rgba(17, 27, 40, 0.95)";
+    view.swatch.style.display = "block";
+    view.swatch.style.background = color;
+    view.name.textContent = definition.name;
+    view.count.textContent = "x∞";
+    view.root.title = "Creative source (drag to inventory)";
+  }
+
   private sumSlots(slots: Array<InventorySlotStack | null>): number {
     let total = 0;
     for (const slot of slots) {
@@ -1073,7 +1290,7 @@ export class HUD {
     return total;
   }
 
-  private registerInventoryDragSlot(view: InventorySlotView, section: InventorySection, index: number): void {
+  private registerInventoryDragSlot(view: InventorySlotView, section: InventoryUiSection, index: number): void {
     view.root.dataset.inventorySlot = "1";
     view.root.dataset.inventorySection = section;
     view.root.dataset.inventoryIndex = String(index);
@@ -1086,7 +1303,7 @@ export class HUD {
     view.root.addEventListener("pointerdown", (event) => this.handleSlotPointerDown(event, section, index));
   }
 
-  private handleSlotDragStart(event: DragEvent, section: InventorySection, index: number): void {
+  private handleSlotDragStart(event: DragEvent, section: InventoryUiSection, index: number): void {
     if (!this.inventoryOpen) {
       event.preventDefault();
       return;
@@ -1117,7 +1334,7 @@ export class HUD {
     }
   }
 
-  private handleSlotPointerDown(event: PointerEvent, section: InventorySection, index: number): void {
+  private handleSlotPointerDown(event: PointerEvent, section: InventoryUiSection, index: number): void {
     if (event.button !== 0) {
       return;
     }
@@ -1162,6 +1379,7 @@ export class HUD {
     event.preventDefault();
     const target = this.extractSlotFromTarget(event.target);
     const source = this.dragSourceSlot;
+    const sourceStack = this.getSlotStack(source.section, source.index);
 
     if (target && !this.isSameSlot(source, target)) {
       const request: InventoryTransferRequest = {
@@ -1170,6 +1388,7 @@ export class HUD {
         toSection: target.section,
         toIndex: target.index,
         amount: this.dragAmount ?? undefined,
+        itemId: sourceStack?.itemId,
       };
 
       for (const listener of this.inventoryTransferListeners) {
@@ -1180,12 +1399,32 @@ export class HUD {
     this.clearDragState();
   };
 
-  private getSlotStack(section: InventorySection, index: number): InventorySlotStack | null {
-    const slots = section === "hotbar" ? this.lastInventoryView.hotbar : this.lastInventoryView.backpack;
-    if (index < 0 || index >= slots.length) {
-      return null;
+  private getSlotStack(section: InventoryUiSection, index: number): InventorySlotStack | null {
+    if (section === "hotbar") {
+      if (index < 0 || index >= this.lastInventoryView.hotbar.length) {
+        return null;
+      }
+      return this.lastInventoryView.hotbar[index] ?? null;
     }
-    return slots[index] ?? null;
+
+    if (section === "backpack") {
+      if (index < 0 || index >= this.lastInventoryView.backpack.length) {
+        return null;
+      }
+      return this.lastInventoryView.backpack[index] ?? null;
+    }
+
+    if (section === "creative") {
+      if (index < 0 || index >= this.creativeItems.length) {
+        return null;
+      }
+      return {
+        itemId: this.creativeItems[index] as ItemId,
+        count: CREATIVE_STACK_AMOUNT,
+      };
+    }
+
+    return null;
   }
 
   private clearDragState(): void {
@@ -1240,8 +1479,8 @@ export class HUD {
   }
 
   private applyDragHighlights(
-    source: { section: InventorySection; index: number } | null,
-    target: { section: InventorySection; index: number } | null
+    source: { section: InventoryUiSection; index: number } | null,
+    target: { section: InventoryUiSection; index: number } | null
   ): void {
     const resetStyle = (slot: InventorySlotView): void => {
       slot.root.style.boxShadow = "none";
@@ -1254,6 +1493,10 @@ export class HUD {
     for (const slot of this.inventoryBackpackSlots) {
       resetStyle(slot);
     }
+    for (const slot of this.creativeSlots) {
+      resetStyle(slot);
+    }
+    resetStyle(this.trashSlot);
 
     if (!source) {
       return;
@@ -1280,20 +1523,49 @@ export class HUD {
     targetView.root.style.transform = "translateY(-1px)";
   }
 
-  private getInventorySlotView(slot: { section: InventorySection; index: number }): InventorySlotView | null {
-    const views = slot.section === "hotbar" ? this.inventoryHotbarSlots : this.inventoryBackpackSlots;
-    if (slot.index < 0 || slot.index >= views.length) {
-      return null;
+  private getInventorySlotView(slot: { section: InventoryUiSection; index: number }): InventorySlotView | null {
+    if (slot.section === "hotbar") {
+      if (slot.index < 0 || slot.index >= this.inventoryHotbarSlots.length) {
+        return null;
+      }
+      return this.inventoryHotbarSlots[slot.index] ?? null;
     }
-    return views[slot.index] ?? null;
+
+    if (slot.section === "backpack") {
+      if (slot.index < 0 || slot.index >= this.inventoryBackpackSlots.length) {
+        return null;
+      }
+      return this.inventoryBackpackSlots[slot.index] ?? null;
+    }
+
+    if (slot.section === "creative") {
+      if (slot.index < 0 || slot.index >= this.creativeSlots.length) {
+        return null;
+      }
+      return this.creativeSlots[slot.index] ?? null;
+    }
+
+    if (slot.section === "trash") {
+      return slot.index === 0 ? this.trashSlot : null;
+    }
+
+    return null;
   }
 
-  private getSlotLabel(section: InventorySection, index: number): string {
-    const sectionName = section === "hotbar" ? "Quickbar" : "Backpack";
-    return `${sectionName} #${index + 1}`;
+  private getSlotLabel(section: InventoryUiSection, index: number): string {
+    if (section === "hotbar") {
+      return `Quickbar #${index + 1}`;
+    }
+    if (section === "backpack") {
+      return `Backpack #${index + 1}`;
+    }
+    if (section === "creative") {
+      return `Creative #${index + 1}`;
+    }
+    return "Trash";
   }
 
-  private extractSlotFromTarget(target: EventTarget | null): { section: InventorySection; index: number } | null {
+  private extractSlotFromTarget(target: EventTarget | null): { section: InventoryUiSection; index: number } | null {
     if (!target || !(target instanceof Element)) {
       return null;
     }
@@ -1304,7 +1576,7 @@ export class HUD {
     }
 
     const sectionData = slotNode.dataset.inventorySection;
-    if (sectionData !== "hotbar" && sectionData !== "backpack") {
+    if (sectionData !== "hotbar" && sectionData !== "backpack" && sectionData !== "creative" && sectionData !== "trash") {
       return null;
     }
 
@@ -1320,8 +1592,8 @@ export class HUD {
   }
 
   private isSameSlot(
-    left: { section: InventorySection; index: number },
-    right: { section: InventorySection; index: number }
+    left: { section: InventoryUiSection; index: number },
+    right: { section: InventoryUiSection; index: number }
   ): boolean {
     return left.section === right.section && left.index === right.index;
   }
@@ -1341,6 +1613,118 @@ export class HUD {
         slot.root.style.transform = "none";
       }
     }
+  }
+
+  private resolveCraftCategories(recipes: CraftRecipeView[]): CraftCategoryView[] {
+    const categories = new Map<string, string>();
+    for (const recipe of recipes) {
+      const categoryId = recipe.categoryId ?? "other";
+      const categoryLabel = recipe.categoryLabel ?? "Other";
+      if (!categories.has(categoryId)) {
+        categories.set(categoryId, categoryLabel);
+      }
+    }
+    return [...categories.entries()].map(([id, label]) => ({ id, label }));
+  }
+
+  private renderCraftCategoryTabs(): void {
+    const activeCategoryIds = new Set(this.craftCategoryOrder.map((entry) => entry.id));
+    for (const [id, button] of this.craftCategoryButtons.entries()) {
+      if (activeCategoryIds.has(id)) {
+        continue;
+      }
+      button.remove();
+      this.craftCategoryButtons.delete(id);
+      this.craftPageByCategory.delete(id);
+    }
+
+    for (const category of this.craftCategoryOrder) {
+      let button = this.craftCategoryButtons.get(category.id);
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.style.border = "1px solid #3f5062";
+        button.style.borderRadius = "999px";
+        button.style.background = "#1b2735";
+        button.style.color = "#dce8f5";
+        button.style.font = "11px/1.2 monospace";
+        button.style.padding = "4px 9px";
+        button.style.cursor = "pointer";
+        button.addEventListener("click", () => {
+          this.selectedCraftCategoryId = category.id;
+          if (!this.craftPageByCategory.has(category.id)) {
+            this.craftPageByCategory.set(category.id, 0);
+          }
+          this.renderCraftCategoryTabs();
+          this.renderCraftRecipes();
+        });
+        this.craftCategoryButtons.set(category.id, button);
+      }
+
+      button.textContent = category.label;
+      if (this.selectedCraftCategoryId === category.id) {
+        button.style.background = "#2b3a4c";
+        button.style.borderColor = "#6da6dd";
+      } else {
+        button.style.background = "#1b2735";
+        button.style.borderColor = "#3f5062";
+      }
+      if (button.parentElement !== this.craftCategoriesRoot) {
+        this.craftCategoriesRoot.appendChild(button);
+      }
+    }
+  }
+
+  private renderCraftRecipes(): void {
+    if (!this.selectedCraftCategoryId) {
+      this.craftRecipesRoot.replaceChildren();
+      this.visibleCraftRecipeIds = [];
+      this.craftPageLine.textContent = "Page 0 / 0";
+      this.craftPrevButton.disabled = true;
+      this.craftNextButton.disabled = true;
+      return;
+    }
+
+    const categoryId = this.selectedCraftCategoryId;
+    const categoryRecipes = [...this.craftRecipeMap.values()].filter(
+      (recipe) => (recipe.categoryId ?? "other") === categoryId
+    );
+    if (categoryRecipes.length <= 0) {
+      const fallbackCategory = this.craftCategoryOrder[0]?.id ?? null;
+      if (fallbackCategory && fallbackCategory !== this.selectedCraftCategoryId) {
+        this.selectedCraftCategoryId = fallbackCategory;
+        this.renderCraftCategoryTabs();
+        this.renderCraftRecipes();
+        return;
+      }
+    }
+    const totalPages = Math.max(1, Math.ceil(categoryRecipes.length / CRAFT_RECIPES_PER_PAGE));
+    const requestedPage = this.craftPageByCategory.get(categoryId) ?? 0;
+    const pageIndex = Math.min(Math.max(requestedPage, 0), totalPages - 1);
+    this.craftPageByCategory.set(categoryId, pageIndex);
+
+    const start = pageIndex * CRAFT_RECIPES_PER_PAGE;
+    const visibleRecipes = categoryRecipes.slice(start, start + CRAFT_RECIPES_PER_PAGE);
+    const nextVisibleIds = visibleRecipes.map((recipe) => recipe.id);
+    const hasSameVisibleIds =
+      nextVisibleIds.length === this.visibleCraftRecipeIds.length &&
+      nextVisibleIds.every((id, index) => id === this.visibleCraftRecipeIds[index]);
+
+    if (!hasSameVisibleIds) {
+      this.craftRecipesRoot.replaceChildren();
+      for (const recipe of visibleRecipes) {
+        const row = this.craftRows.get(recipe.id);
+        if (!row) {
+          continue;
+        }
+        this.craftRecipesRoot.appendChild(row.root);
+      }
+      this.visibleCraftRecipeIds = nextVisibleIds;
+    }
+
+    this.craftPageLine.textContent = `Page ${pageIndex + 1} / ${totalPages}`;
+    this.craftPrevButton.disabled = pageIndex <= 0;
+    this.craftNextButton.disabled = pageIndex >= totalPages - 1;
   }
 
   private createCraftRecipeRow(recipeId: string): CraftRecipeRowView {

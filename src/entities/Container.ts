@@ -3,9 +3,11 @@ import type { ItemId } from "../data/items";
 import type { InputMachine, Machine } from "./Machine";
 import type { Item } from "./Item";
 import type { InventorySlotStack } from "./PlayerInventory";
+import { Item as ItemEntity } from "./Item";
 
 const DEFAULT_SLOT_COUNT = 24;
 const DEFAULT_MAX_STACK_PER_SLOT = 100;
+export type ContainerMachineType = "container" | "iron_chest";
 
 export interface ContainerUiState {
   slots: Array<InventorySlotStack | null>;
@@ -17,15 +19,20 @@ export interface ContainerUiState {
 
 export class Container implements Machine, InputMachine {
   readonly kind = "machine";
-  readonly machineType = "container";
+  readonly machineType: ContainerMachineType;
 
   private readonly maxStackPerSlot: number;
   private slots: Array<InventorySlotStack | null>;
 
-  constructor(slotCount = DEFAULT_SLOT_COUNT, maxStackPerSlot = DEFAULT_MAX_STACK_PER_SLOT) {
+  constructor(
+    slotCount = DEFAULT_SLOT_COUNT,
+    maxStackPerSlot = DEFAULT_MAX_STACK_PER_SLOT,
+    machineType: ContainerMachineType = "container"
+  ) {
     const normalizedSlotCount = Math.max(1, Math.floor(slotCount));
     this.maxStackPerSlot = Math.max(1, Math.floor(maxStackPerSlot));
     this.slots = Array.from({ length: normalizedSlotCount }, () => null);
+    this.machineType = machineType;
   }
 
   canAcceptInput(itemType: ItemId, _inputDirection: Direction): boolean {
@@ -90,6 +97,26 @@ export class Container implements Machine, InputMachine {
       itemId: slot.itemId,
       count: takenCount,
     };
+  }
+
+  takeSingleMatching(allowedItems: ReadonlySet<ItemId> | null = null): ItemEntity | null {
+    for (let i = 0; i < this.slots.length; i += 1) {
+      const slot = this.slots[i];
+      if (!slot || slot.count <= 0) {
+        continue;
+      }
+      if (allowedItems && allowedItems.size > 0 && !allowedItems.has(slot.itemId)) {
+        continue;
+      }
+
+      slot.count -= 1;
+      const itemId = slot.itemId;
+      if (slot.count <= 0) {
+        this.slots[i] = null;
+      }
+      return new ItemEntity(itemId);
+    }
+    return null;
   }
 
   getCount(itemId: ItemId): number {
@@ -272,4 +299,3 @@ export class Container implements Machine, InputMachine {
     };
   }
 }
-

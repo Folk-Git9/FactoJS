@@ -199,6 +199,59 @@ export class PlayerInventory {
     return itemId;
   }
 
+  insertIntoSlot(section: InventorySection, index: number, itemId: ItemId, amount = 1): number {
+    const slots = this.getSectionSlots(section);
+    if (!this.isIndexInBounds(slots, index)) {
+      return 0;
+    }
+
+    const requested = Math.max(0, Math.floor(amount));
+    if (requested <= 0) {
+      return 0;
+    }
+
+    const target = slots[index];
+    if (!target) {
+      slots[index] = { itemId, count: requested };
+      return requested;
+    }
+
+    if (target.itemId !== itemId) {
+      return 0;
+    }
+
+    target.count += requested;
+    return requested;
+  }
+
+  takeFromSlot(section: InventorySection, index: number, amount?: number): InventorySlotStack | null {
+    const slots = this.getSectionSlots(section);
+    if (!this.isIndexInBounds(slots, index)) {
+      return null;
+    }
+
+    const source = slots[index];
+    if (!source) {
+      return null;
+    }
+
+    const requested = amount === undefined ? source.count : Math.max(1, Math.floor(amount));
+    const takenCount = Math.min(source.count, requested);
+    if (takenCount <= 0) {
+      return null;
+    }
+
+    source.count -= takenCount;
+    if (source.count <= 0) {
+      slots[index] = null;
+    }
+
+    return {
+      itemId: source.itemId,
+      count: takenCount,
+    };
+  }
+
   private addToSlots(slots: Array<InventorySlotStack | null>, itemId: ItemId, amount: number): number {
     if (amount <= 0) {
       return 0;

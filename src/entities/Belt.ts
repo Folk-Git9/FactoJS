@@ -12,7 +12,7 @@ export class Belt implements ConveyorNode, ItemHandler {
   progress: number;
   entryDirection: Direction;
 
-  constructor(direction: Direction, speedTilesPerSecond = 2) {
+  constructor(direction: Direction, speedTilesPerSecond = 3) {
     this.direction = direction;
     this.speedTilesPerSecond = speedTilesPerSecond;
     this.item = null;

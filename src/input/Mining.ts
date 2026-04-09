@@ -5,12 +5,17 @@ import { getItemDefinition, type ItemId } from "../data/items";
 import { isConveyorNode } from "../entities/Conveyor";
 import { Container } from "../entities/Container";
 import { isMachine } from "../entities/Machine";
-import { isItemHandler, ItemHandler } from "../entities/ItemHandler";
+import { isItemHandler } from "../entities/ItemHandler";
 import { PlayerSystem } from "../systems/PlayerSystem";
 import { HUD } from "../ui/HUD";
 import { MouseInput, type GridPointerButtonEvent, type GridPointerEvent } from "./Mouse";
 
 const DEFAULT_MINE_DURATION_SECONDS = 0.5;
+
+export interface MiningActionEvents {
+  onMineResource?: (x: number, y: number, amount: number) => void;
+  onPickupBuilding?: (x: number, y: number) => void;
+}
 
 export class MiningInputSystem {
   private readonly world: World;
@@ -20,6 +25,7 @@ export class MiningInputSystem {
   private readonly hud: HUD;
   private readonly isInputEnabled: () => boolean;
   private readonly mineDurationSeconds: number;
+  private readonly actionEvents: MiningActionEvents;
   private readonly unsubscribePointerDown: () => void;
   private readonly unsubscribePointerMove: () => void;
   private readonly unsubscribeButtonState: () => void;
@@ -37,7 +43,8 @@ export class MiningInputSystem {
     playerSystem: PlayerSystem,
     hud: HUD,
     isInputEnabled: () => boolean = () => true,
-    mineDurationSeconds = DEFAULT_MINE_DURATION_SECONDS
+    mineDurationSeconds = DEFAULT_MINE_DURATION_SECONDS,
+    actionEvents: MiningActionEvents = {}
   ) {
     this.world = world;
     this.player = player;
@@ -46,6 +53,7 @@ export class MiningInputSystem {
     this.hud = hud;
     this.isInputEnabled = isInputEnabled;
     this.mineDurationSeconds = Math.max(0.05, mineDurationSeconds);
+    this.actionEvents = actionEvents;
 
     this.unsubscribePointerDown = this.mouse.onPointer(this.handlePointerDown);
     this.unsubscribePointerMove = this.mouse.onPointerMove(this.handlePointerMove);
@@ -104,6 +112,9 @@ export class MiningInputSystem {
     }
 
     const mined = this.playerSystem.mineResourceAtGrid(this.player, this.world, target.x, target.y, 1);
+    if (mined) {
+      this.actionEvents.onMineResource?.(target.x, target.y, 1);
+    }
     this.interactionElapsedSeconds = 0;
 
     const afterMine = this.world.getTile(target.x, target.y)?.resource ?? null;
@@ -179,6 +190,9 @@ export class MiningInputSystem {
     }
 
     const picked = this.tryPickupBuildingAt(target.x, target.y);
+    if (picked) {
+      this.actionEvents.onPickupBuilding?.(target.x, target.y);
+    }
     this.interactionElapsedSeconds = 0;
     const hoveredResource = this.world.getTile(target.x, target.y)?.resource ?? null;
     this.hud.setHoveredResource(hoveredResource ? { type: hoveredResource.type, amount: hoveredResource.amount } : null);
@@ -211,7 +225,7 @@ export class MiningInputSystem {
       return false;
     }
 
-    if (isMachine(tile.building) && tile.building.machineType === "container") {
+    if (tile.building instanceof Container) {
       const container = tile.building as Container;
       const storedStacks = container.clearAndTakeAll();
       for (const stack of storedStacks) {
@@ -221,10 +235,10 @@ export class MiningInputSystem {
 
     const pickupItem = this.getBuildingPickupItem(tile.building);
     if (isItemHandler(tile.building)) {
-      let inventory = tile.building.onPickup();
+      const inventory = tile.building.onPickup();
       if (inventory && inventory.length > 0) {
         for (const stack of inventory) {
-          this.player.inventory.add(stack.itemId,stack.count);
+          this.player.inventory.add(stack.itemId, stack.count);
         }
       }
     }
@@ -232,7 +246,7 @@ export class MiningInputSystem {
     if (pickupItem) {
       this.player.inventory.add(pickupItem, 1);
     }
-    
+
     return true;
   }
 
@@ -253,6 +267,12 @@ export class MiningInputSystem {
     }
     if (isMachine(building) && building.machineType === "container") {
       return "container_item";
+    }
+    if (isMachine(building) && building.machineType === "iron_chest") {
+      return "iron_chest_item";
+    }
+    if (isMachine(building) && building.machineType === "unloader") {
+      return "unloader_item";
     }
     return null;
   }

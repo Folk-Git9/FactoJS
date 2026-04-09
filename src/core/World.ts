@@ -6,6 +6,7 @@ import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
 import { TestProducer, type Machine } from "../entities/Machine";
 import { Router } from "../entities/Router";
+import { Unloader } from "../entities/Unloader";
 import { Grid } from "../grid/Grid";
 import type { ResourceDeposit } from "../grid/Tile";
 import type { Direction, GridPosition } from "./types";
@@ -136,6 +137,47 @@ export class World {
     const container = new Container();
     tile.building = container;
     return container;
+  }
+
+  placeIronChest(x: number, y: number): Container | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    const chest = new Container(36, 200, "iron_chest");
+    tile.building = chest;
+    return chest;
+  }
+
+  placeUnloader(x: number, y: number, direction: Direction): Unloader | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    let unloader: Unloader;
+    const getSourceContainer = (): Container | null => {
+      const sourcePosition = this.getNeighborPosition(x, y, oppositeDirection(unloader.outputDirection));
+      if (!sourcePosition) {
+        return null;
+      }
+
+      const sourceTile = this.getTile(sourcePosition.x, sourcePosition.y);
+      if (!sourceTile?.building || sourceTile.building.kind !== "machine") {
+        return null;
+      }
+
+      if (!(sourceTile.building instanceof Container)) {
+        return null;
+      }
+
+      return sourceTile.building as Container;
+    };
+
+    unloader = new Unloader(direction, getSourceContainer);
+    tile.building = unloader;
+    return unloader;
   }
 
   clearBuilding(x: number, y: number): void {

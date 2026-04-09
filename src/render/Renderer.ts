@@ -29,6 +29,12 @@ export interface PlacementPreviewState {
   canPlace: boolean;
 }
 
+export interface RemotePlayerRenderState {
+  id: string;
+  x: number;
+  y: number;
+}
+
 interface PreviewMaterialState {
   material: THREE.MeshBasicMaterial;
   baseColor: THREE.Color;
@@ -55,6 +61,7 @@ export class Renderer {
   private readonly itemNodes = new Map<string, THREE.Mesh>();
   private readonly itemTypes = new Map<string, string>();
   private playerNode: THREE.Object3D | null = null;
+  private readonly remotePlayerNodes = new Map<string, THREE.Object3D>();
   private placementPreview: PlacementPreviewState | null = null;
   private previewNode: THREE.Object3D | null = null;
   private previewKind: "belt" | "router" | "machine" | null = null;
@@ -132,13 +139,14 @@ export class Renderer {
     this.cameraController.resize(width, height);
   }
 
-  render(world: World, player?: Player): void {
+  render(world: World, player?: Player, remotePlayers: RemotePlayerRenderState[] = []): void {
     const visibleBounds = this.getVisibleGridBounds(1);
     this.syncResources(world, visibleBounds);
     this.syncBuildings(world, visibleBounds);
     this.syncPlacementPreview();
     this.syncItems(world, visibleBounds);
     this.syncPlayer(player);
+    this.syncRemotePlayers(remotePlayers);
     this.webgl.render(this.scene, this.cameraController.camera);
   }
 
@@ -149,6 +157,10 @@ export class Renderer {
     this.previewTileBorder.geometry.dispose();
     this.previewTileBorder.material.dispose();
     this.canvas.removeEventListener("wheel", this.onWheel);
+    for (const node of this.remotePlayerNodes.values()) {
+      this.playerLayer.remove(node);
+    }
+    this.remotePlayerNodes.clear();
     this.webgl.dispose();
     this.canvas.remove();
   }
@@ -254,7 +266,10 @@ export class Renderer {
           }
 
           const created = requiredKind === "machine"
-            ? MeshFactory.createMachine(isDirectionalMachine(tile.building) ? tile.building.outputDirection : "right")
+            ? MeshFactory.createMachine(
+              isDirectionalMachine(tile.building) ? tile.building.outputDirection : "right",
+              tile.building.machineType
+            )
             : requiredKind === "router"
               ? MeshFactory.createRouter(tile.building.direction)
               : MeshFactory.createBelt(tile.building.direction);
@@ -491,6 +506,30 @@ export class Renderer {
     }
 
     this.playerNode.position.set(player.x, player.y, 0.09);
+  }
+
+  private syncRemotePlayers(remotePlayers: RemotePlayerRenderState[]): void {
+    const seenIds = new Set<string>();
+    for (const remotePlayer of remotePlayers) {
+      seenIds.add(remotePlayer.id);
+
+      let node = this.remotePlayerNodes.get(remotePlayer.id);
+      if (!node) {
+        node = MeshFactory.createPlayer(0xf6c177, 0x4a2b0f);
+        this.remotePlayerNodes.set(remotePlayer.id, node);
+        this.playerLayer.add(node);
+      }
+
+      node.position.set(remotePlayer.x, remotePlayer.y, 0.085);
+    }
+
+    for (const [id, node] of this.remotePlayerNodes.entries()) {
+      if (seenIds.has(id)) {
+        continue;
+      }
+      this.playerLayer.remove(node);
+      this.remotePlayerNodes.delete(id);
+    }
   }
 
   private gridToWorld(x: number, y: number): { x: number; y: number } {

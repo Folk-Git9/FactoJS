@@ -1,6 +1,13 @@
 import type { ItemId } from "./items";
 
-export type CraftRecipeId = "craft_furnace" | "craft_belt" | "craft_router" | "craft_drill" | "craft_container";
+export type CraftRecipeId =
+  | "craft_furnace"
+  | "craft_belt"
+  | "craft_router"
+  | "craft_drill"
+  | "craft_container"
+  | "craft_iron_chest"
+  | "craft_unloader";
 
 export interface CraftRecipe {
   id: CraftRecipeId;
@@ -73,6 +80,31 @@ export const CRAFT_RECIPES: CraftRecipe[] = [
     },
     output: {
       item: "container_item",
+      count: 1,
+    },
+  },
+  {
+    id: "craft_iron_chest",
+    name: "Iron Chest",
+    craftSeconds: 2.2,
+    input: {
+      iron_plate: 8,
+    },
+    output: {
+      item: "iron_chest_item",
+      count: 1,
+    },
+  },
+  {
+    id: "craft_unloader",
+    name: "Unloader",
+    craftSeconds: 1.4,
+    input: {
+      iron_plate: 3,
+      belt_item: 1,
+    },
+    output: {
+      item: "unloader_item",
       count: 1,
     },
   },

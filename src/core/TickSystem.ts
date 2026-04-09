@@ -11,8 +11,7 @@ export class TickSystem {
   }
 
   update(deltaSeconds: number, step: (fixedDelta: number) => void): void {
-    const maxAccumulated = this.fixedDeltaSeconds * this.maxStepsPerFrame;
-    this.accumulatorSeconds = Math.min(this.accumulatorSeconds + deltaSeconds, maxAccumulated);
+    this.accumulatorSeconds += Math.max(0, deltaSeconds);
 
     let steps = 0;
     while (this.accumulatorSeconds >= this.fixedDeltaSeconds && steps < this.maxStepsPerFrame) {

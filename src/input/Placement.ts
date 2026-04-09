@@ -1,6 +1,7 @@
 import type { Direction, GridPosition } from "../core/types";
 import { rotateDirection } from "../core/types";
 import { World } from "../core/World";
+import type { PlaceableItemId } from "../data/items";
 import { Item } from "../entities/Item";
 import { isInputMachine, isProducerMachine } from "../entities/Machine";
 import { Player } from "../entities/Player";
@@ -14,12 +15,29 @@ export interface PlacementPreview {
   canPlace: boolean;
 }
 
+export interface PlacementActionEvent {
+  itemId: PlaceableItemId;
+  x: number;
+  y: number;
+  direction: Direction;
+}
+
+export interface PlacementMachineInsertEvent {
+  x: number;
+  y: number;
+  itemId: Item["type"];
+  inputDirection: Direction;
+  count: number;
+}
+
 export class PlacementInputSystem {
   private readonly world: World;
   private readonly player: Player;
   private readonly mouse: MouseInput;
   private readonly isInputEnabled: () => boolean;
   private readonly getSelectedQuickbarIndex: () => number;
+  private readonly onPlacement?: (event: PlacementActionEvent) => void;
+  private readonly onMachineInsert?: (event: PlacementMachineInsertEvent) => void;
   private readonly unsubscribePointerDown: () => void;
   private readonly unsubscribePointerMove: () => void;
 
@@ -31,13 +49,17 @@ export class PlacementInputSystem {
     player: Player,
     mouse: MouseInput,
     getSelectedQuickbarIndex: () => number,
-    isInputEnabled: () => boolean = () => true
+    isInputEnabled: () => boolean = () => true,
+    onPlacement?: (event: PlacementActionEvent) => void,
+    onMachineInsert?: (event: PlacementMachineInsertEvent) => void
   ) {
     this.world = world;
     this.player = player;
     this.mouse = mouse;
     this.getSelectedQuickbarIndex = getSelectedQuickbarIndex;
     this.isInputEnabled = isInputEnabled;
+    this.onPlacement = onPlacement;
+    this.onMachineInsert = onMachineInsert;
 
     this.unsubscribePointerDown = this.mouse.onPointer(this.handlePointerDown);
     this.unsubscribePointerMove = this.mouse.onPointerMove(this.handlePointerMove);
@@ -102,6 +124,12 @@ export class PlacementInputSystem {
       }
       if (this.world.placeBelt(event.position.x, event.position.y, placementDirection)) {
         this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "belt_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
       }
       return;
     }
@@ -112,6 +140,12 @@ export class PlacementInputSystem {
       }
       if (this.world.placeRouter(event.position.x, event.position.y, placementDirection)) {
         this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "router_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
       }
       return;
     }
@@ -122,6 +156,12 @@ export class PlacementInputSystem {
       }
       if (this.world.placeFurnace(event.position.x, event.position.y, placementDirection)) {
         this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "furnace_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
       }
       return;
     }
@@ -132,6 +172,12 @@ export class PlacementInputSystem {
       }
       if (this.world.placeDrill(event.position.x, event.position.y, placementDirection)) {
         this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "drill_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
       }
       return;
     }
@@ -142,6 +188,44 @@ export class PlacementInputSystem {
       }
       if (this.world.placeContainer(event.position.x, event.position.y)) {
         this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "container_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
+      }
+      return;
+    }
+
+    if (slot.itemId === "iron_chest_item") {
+      if (!this.canPlaceAt(event.position.x, event.position.y, slot.itemId)) {
+        return;
+      }
+      if (this.world.placeIronChest(event.position.x, event.position.y)) {
+        this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "iron_chest_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
+      }
+      return;
+    }
+
+    if (slot.itemId === "unloader_item") {
+      if (!this.canPlaceAt(event.position.x, event.position.y, slot.itemId)) {
+        return;
+      }
+      if (this.world.placeUnloader(event.position.x, event.position.y, placementDirection)) {
+        this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "unloader_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
       }
       return;
     }
@@ -157,6 +241,14 @@ export class PlacementInputSystem {
         const accepted = tile.building.acceptInput(new Item(consumed), inputDirection);
         if (!accepted) {
           this.player.inventory.add(consumed, 1);
+        } else {
+          this.onMachineInsert?.({
+            x: event.position.x,
+            y: event.position.y,
+            itemId: consumed,
+            inputDirection,
+            count: 1,
+          });
         }
         return;
       }
@@ -183,6 +275,12 @@ export class PlacementInputSystem {
       return "machine";
     }
     if (itemId === "container_item") {
+      return "machine";
+    }
+    if (itemId === "iron_chest_item") {
+      return "machine";
+    }
+    if (itemId === "unloader_item") {
       return "machine";
     }
     return null;

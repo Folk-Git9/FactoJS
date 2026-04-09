@@ -3,6 +3,7 @@ import type { InventorySlotStack } from "../entities/PlayerInventory";
 import type { CraftRecipeView, MachineTransferMode } from "./HUD";
 
 export interface ContainerGuiView {
+  title?: string;
   gridX: number;
   gridY: number;
   slots: Array<InventorySlotStack | null>;
@@ -39,6 +40,7 @@ export class ContainerGui {
   private readonly titleLine: HTMLDivElement;
   private readonly positionLine: HTMLDivElement;
   private readonly capacityLine: HTMLDivElement;
+  private readonly capacityBarFill: HTMLDivElement;
   private readonly slotGrid: HTMLDivElement;
   private readonly recipesRoot: HTMLDivElement;
   private readonly slotViews: ContainerSlotView[] = [];
@@ -48,7 +50,6 @@ export class ContainerGui {
   private readonly closeListeners: ContainerCloseListener[] = [];
 
   private isOpenFlag = false;
-  private currentView: ContainerGuiView | null = null;
 
   constructor(parent: HTMLElement) {
     this.overlay = document.createElement("div");
@@ -57,22 +58,25 @@ export class ContainerGui {
     this.overlay.style.display = "none";
     this.overlay.style.alignItems = "center";
     this.overlay.style.justifyContent = "center";
-    this.overlay.style.background = "rgba(3, 8, 13, 0.36)";
+    this.overlay.style.background = "radial-gradient(circle at 50% 30%, rgba(20, 36, 54, 0.52), rgba(5, 9, 14, 0.82))";
+    this.overlay.style.backdropFilter = "blur(3px)";
     this.overlay.style.pointerEvents = "auto";
     this.overlay.style.zIndex = "19";
 
     const windowRoot = document.createElement("div");
     windowRoot.style.display = "flex";
     windowRoot.style.flexDirection = "column";
-    windowRoot.style.gap = "10px";
-    windowRoot.style.width = "min(980px, calc(100vw - 24px))";
+    windowRoot.style.gap = "14px";
+    windowRoot.style.width = "min(1040px, calc(100vw - 24px))";
     windowRoot.style.maxHeight = "calc(100vh - 24px)";
-    windowRoot.style.padding = "12px";
+    windowRoot.style.padding = "14px";
     windowRoot.style.boxSizing = "border-box";
-    windowRoot.style.borderRadius = "12px";
-    windowRoot.style.border = "1px solid #3a4758";
-    windowRoot.style.background = "rgba(8, 13, 20, 0.97)";
-    windowRoot.style.color = "#dce7f3";
+    windowRoot.style.borderRadius = "16px";
+    windowRoot.style.border = "1px solid rgba(102, 148, 194, 0.46)";
+    windowRoot.style.background =
+      "linear-gradient(180deg, rgba(9, 17, 27, 0.98) 0%, rgba(7, 13, 21, 0.98) 100%)";
+    windowRoot.style.boxShadow = "0 24px 68px rgba(0, 0, 0, 0.42)";
+    windowRoot.style.color = "#dbe8f5";
     windowRoot.style.font = "12px/1.4 monospace";
     windowRoot.style.overflow = "auto";
     this.overlay.appendChild(windowRoot);
@@ -82,96 +86,126 @@ export class ContainerGui {
     header.style.justifyContent = "space-between";
     header.style.alignItems = "center";
     header.style.gap = "8px";
-    header.style.paddingBottom = "8px";
-    header.style.borderBottom = "1px solid #273646";
+    header.style.paddingBottom = "10px";
+    header.style.borderBottom = "1px solid rgba(78, 107, 138, 0.45)";
     windowRoot.appendChild(header);
 
+    const headerLeft = document.createElement("div");
+    headerLeft.style.display = "flex";
+    headerLeft.style.flexDirection = "column";
+    headerLeft.style.gap = "4px";
+    header.appendChild(headerLeft);
+
     this.titleLine = document.createElement("div");
-    this.titleLine.style.font = "14px/1.2 monospace";
-    this.titleLine.style.color = "#e4edf7";
+    this.titleLine.style.font = "16px/1.1 monospace";
+    this.titleLine.style.letterSpacing = "0.3px";
+    this.titleLine.style.color = "#eff7ff";
     this.titleLine.textContent = "Container";
-    header.appendChild(this.titleLine);
+    headerLeft.appendChild(this.titleLine);
+
+    this.positionLine = document.createElement("div");
+    this.positionLine.style.color = "#9bb4cb";
+    this.positionLine.style.font = "11px/1.2 monospace";
+    this.positionLine.textContent = "Position: -";
+    headerLeft.appendChild(this.positionLine);
 
     const closeButton = document.createElement("button");
     closeButton.type = "button";
-    closeButton.style.border = "1px solid #3f5062";
-    closeButton.style.borderRadius = "6px";
-    closeButton.style.background = "#1b2735";
-    closeButton.style.color = "#dce8f5";
-    closeButton.style.font = "11px/1.2 monospace";
-    closeButton.style.padding = "4px 8px";
+    closeButton.style.border = "1px solid rgba(128, 168, 210, 0.55)";
+    closeButton.style.borderRadius = "8px";
+    closeButton.style.background = "linear-gradient(180deg, rgba(28, 48, 69, 0.95), rgba(20, 35, 53, 0.95))";
+    closeButton.style.color = "#dbe9f7";
+    closeButton.style.font = "11px/1 monospace";
+    closeButton.style.padding = "7px 11px";
     closeButton.style.cursor = "pointer";
     closeButton.textContent = "Close";
     closeButton.addEventListener("click", () => this.emitClose());
     header.appendChild(closeButton);
 
-    this.positionLine = document.createElement("div");
-    this.positionLine.style.color = "#9cb0c4";
-    this.positionLine.textContent = "Cell: -";
-    windowRoot.appendChild(this.positionLine);
+    const capacityPanel = document.createElement("div");
+    capacityPanel.style.display = "flex";
+    capacityPanel.style.flexDirection = "column";
+    capacityPanel.style.gap = "6px";
+    capacityPanel.style.border = "1px solid rgba(78, 107, 138, 0.4)";
+    capacityPanel.style.borderRadius = "10px";
+    capacityPanel.style.padding = "10px";
+    capacityPanel.style.background = "rgba(10, 19, 31, 0.8)";
+    windowRoot.appendChild(capacityPanel);
 
     this.capacityLine = document.createElement("div");
-    this.capacityLine.style.color = "#9cb0c4";
+    this.capacityLine.style.color = "#c4d6ea";
     this.capacityLine.textContent = "Stored: 0 / 0";
-    windowRoot.appendChild(this.capacityLine);
+    capacityPanel.appendChild(this.capacityLine);
+
+    const capacityBarTrack = document.createElement("div");
+    capacityBarTrack.style.height = "7px";
+    capacityBarTrack.style.borderRadius = "999px";
+    capacityBarTrack.style.overflow = "hidden";
+    capacityBarTrack.style.background = "rgba(53, 77, 103, 0.8)";
+    capacityPanel.appendChild(capacityBarTrack);
+
+    this.capacityBarFill = document.createElement("div");
+    this.capacityBarFill.style.width = "0%";
+    this.capacityBarFill.style.height = "100%";
+    this.capacityBarFill.style.background = "linear-gradient(90deg, #62b3ff, #8edbff)";
+    capacityBarTrack.appendChild(this.capacityBarFill);
 
     const content = document.createElement("div");
-    content.style.display = "flex";
-    content.style.alignItems = "stretch";
+    content.style.display = "grid";
+    content.style.gridTemplateColumns = "repeat(auto-fit, minmax(280px, 1fr))";
     content.style.gap = "12px";
     windowRoot.appendChild(content);
 
     const slotsPanel = document.createElement("div");
-    slotsPanel.style.flex = "1 1 auto";
     slotsPanel.style.display = "flex";
     slotsPanel.style.flexDirection = "column";
     slotsPanel.style.gap = "8px";
-    slotsPanel.style.border = "1px solid #324356";
-    slotsPanel.style.borderRadius = "10px";
+    slotsPanel.style.border = "1px solid rgba(78, 107, 138, 0.42)";
+    slotsPanel.style.borderRadius = "12px";
     slotsPanel.style.padding = "10px";
-    slotsPanel.style.background = "rgba(11, 16, 24, 0.86)";
+    slotsPanel.style.background =
+      "linear-gradient(180deg, rgba(11, 19, 31, 0.85) 0%, rgba(9, 15, 25, 0.9) 100%)";
     content.appendChild(slotsPanel);
 
     const slotsTitle = document.createElement("div");
-    slotsTitle.style.color = "#dce8f5";
-    slotsTitle.style.font = "12px/1.2 monospace";
+    slotsTitle.style.color = "#e5f0fa";
+    slotsTitle.style.font = "13px/1.2 monospace";
     slotsTitle.textContent = "Storage Slots";
     slotsPanel.appendChild(slotsTitle);
 
     const slotsHint = document.createElement("div");
-    slotsHint.style.color = "#8da3b8";
+    slotsHint.style.color = "#8ea7bf";
     slotsHint.style.font = "11px/1.3 monospace";
-    slotsHint.textContent = "LMB/RMB take stack, Shift = half, Ctrl = one.";
+    slotsHint.textContent = "LMB/RMB: take all, Shift: half, Ctrl: one";
     slotsPanel.appendChild(slotsHint);
 
     this.slotGrid = document.createElement("div");
     this.slotGrid.style.display = "grid";
-    this.slotGrid.style.gridTemplateColumns = "repeat(8, minmax(64px, 1fr))";
-    this.slotGrid.style.gap = "6px";
+    this.slotGrid.style.gridTemplateColumns = "repeat(auto-fill, minmax(82px, 1fr))";
+    this.slotGrid.style.gap = "7px";
     slotsPanel.appendChild(this.slotGrid);
 
     const craftPanel = document.createElement("div");
-    craftPanel.style.flex = "0 0 280px";
     craftPanel.style.display = "flex";
     craftPanel.style.flexDirection = "column";
-    craftPanel.style.border = "1px solid #324356";
-    craftPanel.style.borderRadius = "10px";
+    craftPanel.style.gap = "8px";
+    craftPanel.style.border = "1px solid rgba(78, 107, 138, 0.42)";
+    craftPanel.style.borderRadius = "12px";
     craftPanel.style.padding = "10px";
-    craftPanel.style.background = "rgba(11, 16, 24, 0.86)";
+    craftPanel.style.background =
+      "linear-gradient(180deg, rgba(12, 22, 34, 0.88) 0%, rgba(9, 17, 28, 0.9) 100%)";
     content.appendChild(craftPanel);
 
     const craftTitle = document.createElement("div");
-    craftTitle.style.color = "#dce8f5";
-    craftTitle.style.font = "12px/1.2 monospace";
-    craftTitle.style.marginBottom = "8px";
-    craftTitle.textContent = "Crafting";
+    craftTitle.style.color = "#e5f0fa";
+    craftTitle.style.font = "13px/1.2 monospace";
+    craftTitle.textContent = "Crafting Queue";
     craftPanel.appendChild(craftTitle);
 
     const craftHint = document.createElement("div");
-    craftHint.style.color = "#8da3b8";
+    craftHint.style.color = "#8ea7bf";
     craftHint.style.font = "11px/1.3 monospace";
-    craftHint.style.marginBottom = "8px";
-    craftHint.textContent = "Crafts use items from this container.";
+    craftHint.textContent = "Uses resources from this container";
     craftPanel.appendChild(craftHint);
 
     this.recipesRoot = document.createElement("div");
@@ -190,7 +224,6 @@ export class ContainerGui {
   }
 
   setView(view: ContainerGuiView | null): void {
-    this.currentView = view;
     this.isOpenFlag = view !== null;
     this.overlay.style.display = this.isOpenFlag ? "flex" : "none";
 
@@ -198,9 +231,12 @@ export class ContainerGui {
       return;
     }
 
-    this.positionLine.textContent = `Cell: (${view.gridX}, ${view.gridY})`;
+    this.titleLine.textContent = view.title ?? "Container";
+    this.positionLine.textContent = `Position: (${view.gridX}, ${view.gridY})`;
     this.capacityLine.textContent =
-      `Stored: ${view.totalCount} / ${view.totalCapacity} | Stack cap: ${view.maxStackPerSlot}`;
+      `Stored: ${view.totalCount} / ${view.totalCapacity} | Max stack: ${view.maxStackPerSlot}`;
+    const fill01 = view.totalCapacity > 0 ? Math.min(Math.max(view.totalCount / view.totalCapacity, 0), 1) : 0;
+    this.capacityBarFill.style.width = `${(fill01 * 100).toFixed(1)}%`;
 
     this.ensureSlotCount(view.slots.length);
     for (let i = 0; i < view.slots.length; i += 1) {
@@ -233,8 +269,10 @@ export class ContainerGui {
 
       row.title.textContent = recipe.title;
       row.details.textContent = `${recipe.outputLabel} | ${recipe.inputLabel}`;
-      row.button.disabled = !recipe.canCraft;
-      row.button.textContent = recipe.canCraft ? "Craft" : "Need Items";
+      row.button.disabled = false;
+      row.button.textContent = recipe.canCraft ? "Craft" : "Missing";
+      row.button.style.opacity = recipe.canCraft ? "1" : "0.7";
+      row.root.style.borderColor = recipe.canCraft ? "rgba(102, 154, 202, 0.56)" : "rgba(69, 84, 101, 0.65)";
     }
   }
 
@@ -299,15 +337,15 @@ export class ContainerGui {
   private createSlotView(index: number): ContainerSlotView {
     const root = document.createElement("button");
     root.type = "button";
-    root.style.border = "1px solid #3a4758";
-    root.style.borderRadius = "8px";
-    root.style.background = "rgba(8, 12, 18, 0.86)";
+    root.style.border = "1px solid rgba(63, 86, 111, 0.75)";
+    root.style.borderRadius = "10px";
+    root.style.background = "linear-gradient(180deg, rgba(15, 25, 38, 0.92), rgba(10, 18, 30, 0.96))";
     root.style.display = "flex";
     root.style.flexDirection = "column";
     root.style.justifyContent = "space-between";
     root.style.alignItems = "stretch";
     root.style.padding = "6px";
-    root.style.minHeight = "72px";
+    root.style.minHeight = "78px";
     root.style.cursor = "pointer";
     root.style.color = "#dce8f5";
     root.style.font = "11px/1.3 monospace";
@@ -322,28 +360,28 @@ export class ContainerGui {
     root.appendChild(top);
 
     const indexLabel = document.createElement("div");
-    indexLabel.style.color = "#6f8296";
+    indexLabel.style.color = "#7f96ae";
     indexLabel.style.font = "10px/1 monospace";
     indexLabel.textContent = `${index + 1}`;
     top.appendChild(indexLabel);
 
     const swatch = document.createElement("div");
-    swatch.style.width = "10px";
-    swatch.style.height = "10px";
-    swatch.style.borderRadius = "50%";
+    swatch.style.width = "12px";
+    swatch.style.height = "12px";
+    swatch.style.borderRadius = "3px";
     swatch.style.display = "none";
     top.appendChild(swatch);
 
     const name = document.createElement("div");
-    name.style.color = "#94a7bc";
-    name.style.font = "10px/1.15 monospace";
+    name.style.color = "#9fb6cc";
+    name.style.font = "10px/1.2 monospace";
     name.style.wordBreak = "break-word";
-    name.style.minHeight = "24px";
+    name.style.minHeight = "26px";
     name.textContent = "";
     root.appendChild(name);
 
     const count = document.createElement("div");
-    count.style.color = "#dce7f3";
+    count.style.color = "#e6f1fb";
     count.style.font = "11px/1.1 monospace";
     count.style.textAlign = "right";
     count.textContent = "";
@@ -369,12 +407,12 @@ export class ContainerGui {
 
   private renderSlot(view: ContainerSlotView, stack: InventorySlotStack | null, maxStack: number): void {
     if (!stack) {
-      view.root.style.borderColor = "#3a4758";
-      view.root.style.background = "rgba(8, 12, 18, 0.86)";
+      view.root.style.borderColor = "rgba(63, 86, 111, 0.75)";
+      view.root.style.background = "linear-gradient(180deg, rgba(15, 25, 38, 0.92), rgba(10, 18, 30, 0.96))";
       view.root.disabled = true;
       view.root.style.opacity = "0.7";
       view.swatch.style.display = "none";
-      view.name.textContent = "";
+      view.name.textContent = "Empty";
       view.count.textContent = "";
       return;
     }
@@ -382,32 +420,32 @@ export class ContainerGui {
     const definition = getItemDefinition(stack.itemId);
     const color = this.toCssColor(definition.color);
     view.root.style.borderColor = color;
-    view.root.style.background = "rgba(12, 19, 29, 0.95)";
+    view.root.style.background = "linear-gradient(180deg, rgba(16, 28, 43, 0.95), rgba(10, 20, 33, 0.98))";
     view.root.disabled = false;
     view.root.style.opacity = "1";
     view.swatch.style.display = "block";
     view.swatch.style.background = color;
     view.name.textContent = definition.name;
-    view.count.textContent = `x${stack.count} / ${maxStack}`;
+    view.count.textContent = `${stack.count} / ${maxStack}`;
   }
 
   private createCraftRow(recipeId: string): ContainerCraftRowView {
     const root = document.createElement("div");
-    root.style.border = "1px solid #324356";
-    root.style.borderRadius = "8px";
-    root.style.background = "rgba(11, 16, 24, 0.86)";
+    root.style.border = "1px solid rgba(69, 84, 101, 0.65)";
+    root.style.borderRadius = "9px";
+    root.style.background = "linear-gradient(180deg, rgba(15, 26, 39, 0.88), rgba(10, 19, 31, 0.9))";
     root.style.padding = "8px";
     root.style.display = "flex";
     root.style.flexDirection = "column";
     root.style.gap = "6px";
 
     const title = document.createElement("div");
-    title.style.color = "#dce8f5";
+    title.style.color = "#e2edf8";
     title.style.font = "12px/1.2 monospace";
     root.appendChild(title);
 
     const details = document.createElement("div");
-    details.style.color = "#98adc2";
+    details.style.color = "#95afc7";
     details.style.font = "11px/1.3 monospace";
     details.style.wordBreak = "break-word";
     root.appendChild(details);
@@ -415,12 +453,12 @@ export class ContainerGui {
     const button = document.createElement("button");
     button.type = "button";
     button.style.alignSelf = "flex-start";
-    button.style.border = "1px solid #3f5062";
-    button.style.borderRadius = "6px";
-    button.style.background = "#1b2735";
-    button.style.color = "#dce8f5";
+    button.style.border = "1px solid rgba(128, 168, 210, 0.58)";
+    button.style.borderRadius = "7px";
+    button.style.background = "linear-gradient(180deg, rgba(32, 55, 79, 0.95), rgba(22, 40, 61, 0.95))";
+    button.style.color = "#deecfa";
     button.style.font = "11px/1.2 monospace";
-    button.style.padding = "4px 8px";
+    button.style.padding = "5px 9px";
     button.style.cursor = "pointer";
     button.addEventListener("click", () => this.emitCraftRequest(recipeId));
     root.appendChild(button);
@@ -465,4 +503,3 @@ export class ContainerGui {
     return `#${color.toString(16).padStart(6, "0")}`;
   }
 }
-
