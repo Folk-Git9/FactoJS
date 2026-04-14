@@ -37,18 +37,15 @@ The goal is simple:
 git clone https://github.com/yourname/factojs.git
 cd factojs
 npm install
-
+```
 ---
-
 ## ▶️ Development (Run the game)
-
 ```bash
 npm run dev
 ```
 
 Then open:
 http://localhost:5173
-```
 
 ---
 
