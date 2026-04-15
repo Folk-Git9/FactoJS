@@ -274,6 +274,9 @@ export class MiningInputSystem {
     if (isMachine(building) && building.machineType === "unloader") {
       return "unloader_item";
     }
+    if (isMachine(building) && building.machineType === "programmable_machine") {
+      return "programmable_machine_item";
+    }
     return null;
   }
 

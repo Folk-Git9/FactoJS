@@ -5,18 +5,28 @@ import { isConveyorNode } from "../entities/Conveyor";
 import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
 import { TestProducer, type Machine } from "../entities/Machine";
+import { ProgrammableMachine } from "../entities/ProgrammableMachine";
 import { Router } from "../entities/Router";
+import { ShotTracer } from "../entities/ShotTracer";
+import { Turret } from "../entities/Turret";
 import { Unloader } from "../entities/Unloader";
+import { Zombie } from "../entities/Zombie";
 import { Grid } from "../grid/Grid";
 import type { ResourceDeposit } from "../grid/Tile";
+import type { Building } from "../grid/Tile";
 import type { Direction, GridPosition } from "./types";
 import { DIRECTION_TO_GRID_OFFSET, oppositeDirection } from "./types";
 import type { ItemId, ResourceItemId } from "../data/items";
 
 export class World {
   readonly grid: Grid;
+  readonly zombies: Zombie[] = [];
+  readonly tracers: ShotTracer[] = [];
   tick = 0;
   elapsedSeconds = 0;
+  private readonly buildingHealth = new Map<string, { current: number; max: number }>();
+  private nextZombieId = 1;
+  private nextTracerId = 1;
 
   constructor(width: number, height: number) {
     this.grid = new Grid(width, height);
@@ -75,7 +85,7 @@ export class World {
     if (isConveyorNode(previous) && previous.item) {
       belt.acceptItem(previous.item, previous.progress, previous.entryDirection);
     }
-    tile.building = belt;
+    this.setBuildingAt(x, y, belt);
     return belt;
   }
 
@@ -90,7 +100,7 @@ export class World {
     if (isConveyorNode(previous) && previous.item) {
       router.acceptItem(previous.item, previous.progress, previous.entryDirection);
     }
-    tile.building = router;
+    this.setBuildingAt(x, y, router);
     return router;
   }
 
@@ -101,7 +111,7 @@ export class World {
     }
 
     const machine = new TestProducer(outputItem, direction);
-    tile.building = machine;
+    this.setBuildingAt(x, y, machine);
     return machine;
   }
 
@@ -112,7 +122,7 @@ export class World {
     }
 
     const furnace = new Furnace(direction);
-    tile.building = furnace;
+    this.setBuildingAt(x, y, furnace);
     return furnace;
   }
 
@@ -124,7 +134,7 @@ export class World {
 
     const initialResourceType = tile.resource?.type ?? null;
     const drill = new Drill(direction, () => this.mineResourceAt(x, y, 1), initialResourceType);
-    tile.building = drill;
+    this.setBuildingAt(x, y, drill);
     return drill;
   }
 
@@ -135,7 +145,7 @@ export class World {
     }
 
     const container = new Container();
-    tile.building = container;
+    this.setBuildingAt(x, y, container);
     return container;
   }
 
@@ -146,7 +156,7 @@ export class World {
     }
 
     const chest = new Container(36, 200, "iron_chest");
-    tile.building = chest;
+    this.setBuildingAt(x, y, chest);
     return chest;
   }
 
@@ -176,16 +186,37 @@ export class World {
     };
 
     unloader = new Unloader(direction, getSourceContainer);
-    tile.building = unloader;
+    this.setBuildingAt(x, y, unloader);
     return unloader;
   }
 
-  clearBuilding(x: number, y: number): void {
+  placeProgrammableMachine(x: number, y: number, direction: Direction): ProgrammableMachine | null {
     const tile = this.grid.get(x, y);
     if (!tile) {
-      return;
+      return null;
     }
-    tile.building = null;
+
+    const machine = new ProgrammableMachine(direction, () => ({
+      tick: this.tick,
+      time: this.elapsedSeconds,
+    }));
+    this.setBuildingAt(x, y, machine);
+    return machine;
+  }
+
+  placeTurret(x: number, y: number, direction: Direction): Turret | null {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return null;
+    }
+
+    const turret = new Turret(direction);
+    this.setBuildingAt(x, y, turret);
+    return turret;
+  }
+
+  clearBuilding(x: number, y: number): void {
+    this.setBuildingAt(x, y, null);
   }
 
   spawnItemOnConveyor(x: number, y: number, itemType: ItemId, progress = 0): boolean {
@@ -214,6 +245,126 @@ export class World {
 
   countItemsOnBelts(): number {
     return this.countItemsOnConveyors();
+  }
+
+  gridToWorld(x: number, y: number): { x: number; y: number } {
+    return {
+      x: x - this.width / 2 + 0.5,
+      y: this.height / 2 - y - 0.5,
+    };
+  }
+
+  clampWorldX(x: number): number {
+    return Math.min(this.width / 2 - 0.5, Math.max(-this.width / 2 + 0.5, x));
+  }
+
+  clampWorldY(y: number): number {
+    return Math.min(this.height / 2 - 0.5, Math.max(-this.height / 2 + 0.5, y));
+  }
+
+  getDefendedAreaCenter(fallbackX: number, fallbackY: number): { x: number; y: number } {
+    const anchors = this.getBuildingAnchors();
+    if (anchors.length <= 0) {
+      return {
+        x: this.clampWorldX(fallbackX),
+        y: this.clampWorldY(fallbackY),
+      };
+    }
+
+    let sumX = 0;
+    let sumY = 0;
+    for (const anchor of anchors) {
+      sumX += anchor.x;
+      sumY += anchor.y;
+    }
+    return {
+      x: sumX / anchors.length,
+      y: sumY / anchors.length,
+    };
+  }
+
+  getBuildingAnchors(): Array<{ gridX: number; gridY: number; x: number; y: number }> {
+    const anchors: Array<{ gridX: number; gridY: number; x: number; y: number }> = [];
+    for (const key of this.buildingHealth.keys()) {
+      const [rawX, rawY] = key.split(":");
+      const gridX = Number(rawX);
+      const gridY = Number(rawY);
+      if (!Number.isInteger(gridX) || !Number.isInteger(gridY)) {
+        continue;
+      }
+      const worldPosition = this.gridToWorld(gridX, gridY);
+      anchors.push({
+        gridX,
+        gridY,
+        x: worldPosition.x,
+        y: worldPosition.y,
+      });
+    }
+    return anchors;
+  }
+
+  damageBuilding(x: number, y: number, damage: number): boolean {
+    const key = this.makeBuildingKey(x, y);
+    const health = this.buildingHealth.get(key);
+    if (!health) {
+      return false;
+    }
+
+    health.current = Math.max(0, health.current - Math.max(0, damage));
+    if (health.current > 0) {
+      this.buildingHealth.set(key, health);
+      return false;
+    }
+
+    this.clearBuilding(x, y);
+    return true;
+  }
+
+  spawnZombie(
+    x: number,
+    y: number,
+    maxHealth?: number,
+    moveSpeedTilesPerSecond?: number,
+    attackRange?: number,
+    attackDamage?: number,
+    attackCooldownSeconds?: number
+  ): Zombie {
+    const zombie = new Zombie(
+      `z${this.nextZombieId++}`,
+      x,
+      y,
+      maxHealth,
+      moveSpeedTilesPerSecond,
+      attackRange,
+      attackDamage,
+      attackCooldownSeconds
+    );
+    this.zombies.push(zombie);
+    return zombie;
+  }
+
+  removeDeadZombies(): void {
+    for (let i = this.zombies.length - 1; i >= 0; i -= 1) {
+      if (this.zombies[i]?.health ?? 0 > 0) {
+        continue;
+      }
+      this.zombies.splice(i, 1);
+    }
+  }
+
+  spawnTracer(fromX: number, fromY: number, toX: number, toY: number, durationSeconds?: number): ShotTracer {
+    const tracer = new ShotTracer(`t${this.nextTracerId++}`, fromX, fromY, toX, toY, durationSeconds);
+    this.tracers.push(tracer);
+    return tracer;
+  }
+
+  removeExpiredTracers(): void {
+    for (let i = this.tracers.length - 1; i >= 0; i -= 1) {
+      if ((this.tracers[i]?.remainingSeconds ?? 0) > 0) {
+        continue;
+      }
+      this.tracers.splice(i, 1);
+    }
   }
 
   seedDemoLayout(): void {
@@ -365,5 +516,54 @@ export class World {
       state = (state * 1664525 + 1013904223) >>> 0;
       return state / 4294967296;
     };
+  }
+
+  private setBuildingAt(x: number, y: number, building: Building | null): void {
+    const tile = this.grid.get(x, y);
+    if (!tile) {
+      return;
+    }
+
+    tile.building = building;
+    const key = this.makeBuildingKey(x, y);
+    if (!building) {
+      this.buildingHealth.delete(key);
+      return;
+    }
+
+    const maxHealth = this.getMaxBuildingHealth(building);
+    this.buildingHealth.set(key, {
+      current: maxHealth,
+      max: maxHealth,
+    });
+  }
+
+  private getMaxBuildingHealth(building: Building): number {
+    if (building.kind === "belt") {
+      return 24;
+    }
+    if (building.kind === "router") {
+      return 32;
+    }
+    if (building.kind !== "machine") {
+      return 48;
+    }
+    if (building.machineType === "container" || building.machineType === "iron_chest") {
+      return 72;
+    }
+    if (building.machineType === "furnace" || building.machineType === "drill") {
+      return 64;
+    }
+    if (building.machineType === "unloader" || building.machineType === "programmable_machine") {
+      return 54;
+    }
+    if (building.machineType === "turret") {
+      return 90;
+    }
+    return 48;
+  }
+
+  private makeBuildingKey(x: number, y: number): string {
+    return `${x}:${y}`;
   }
 }

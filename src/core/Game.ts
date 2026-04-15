@@ -3,6 +3,7 @@ import { Container } from "../entities/Container";
 import { Drill } from "../entities/Drill";
 import { Furnace } from "../entities/Furnace";
 import { Item } from "../entities/Item";
+import { ProgrammableMachine } from "../entities/ProgrammableMachine";
 import { Unloader } from "../entities/Unloader";
 import { isInputMachine, isMachine } from "../entities/Machine";
 import { Player } from "../entities/Player";
@@ -15,6 +16,7 @@ import {
 } from "../input/Placement";
 import { Renderer } from "../render/Renderer";
 import { BeltSystem } from "../systems/BeltSystem";
+import { CombatSystem } from "../systems/CombatSystem";
 import { PlayerSystem } from "../systems/PlayerSystem";
 import { ProductionSystem } from "../systems/ProductionSystem";
 import { TransportSystem } from "../systems/TransportSystem";
@@ -27,6 +29,11 @@ import {
 import { ITEM_DEFINITIONS, getItemDefinition, type ItemId, type PlaceableItemId } from "../data/items";
 import { HUD, type InventoryTransferRequest, type MachineGuiActionRequest, type MachineTransferMode } from "../ui/HUD";
 import { ContainerGui, type ContainerTakeSlotRequest } from "../ui/ContainerGui";
+import {
+  ProgrammableMachineGui,
+  type ProgrammableMachineApplyRequest,
+  type ProgrammableMachineTakeSlotRequest,
+} from "../ui/ProgrammableMachineGui";
 import { UnloaderGui, type UnloaderFilterChangeRequest } from "../ui/UnloaderGui";
 import { TickSystem } from "./TickSystem";
 import { World } from "./World";
@@ -46,7 +53,7 @@ interface ActiveCraftTask {
 interface OpenMachineGuiTarget {
   x: number;
   y: number;
-  machineType: "furnace" | "drill" | "container" | "iron_chest" | "unloader";
+  machineType: "furnace" | "drill" | "container" | "iron_chest" | "unloader" | "programmable_machine";
 }
 
 export class Game {
@@ -56,10 +63,12 @@ export class Game {
   private readonly playerSystem: PlayerSystem;
   private readonly productionSystem: ProductionSystem;
   private readonly transportSystem: TransportSystem;
+  private readonly combatSystem: CombatSystem;
 
   private readonly renderer: Renderer;
   private readonly hud: HUD;
   private readonly containerGui: ContainerGui;
+  private readonly programmableMachineGui: ProgrammableMachineGui;
   private readonly unloaderGui: UnloaderGui;
   private readonly mouse: MouseInput;
   private readonly miningInput: MiningInputSystem;
@@ -71,6 +80,9 @@ export class Game {
   private readonly unsubscribeContainerTakeSlot: () => void;
   private readonly unsubscribeContainerCraftRequest: () => void;
   private readonly unsubscribeContainerClose: () => void;
+  private readonly unsubscribeProgrammableMachineTakeSlot: () => void;
+  private readonly unsubscribeProgrammableMachineApply: () => void;
+  private readonly unsubscribeProgrammableMachineClose: () => void;
   private readonly unsubscribeUnloaderFilterChange: () => void;
   private readonly unsubscribeUnloaderClose: () => void;
   private readonly unsubscribeMachinePointer: () => void;
@@ -93,6 +105,14 @@ export class Game {
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (this.isTextInputFocused()) {
+      if (this.resolveControlKey(event) === "escape" && this.isMachineOverlayOpen()) {
+        event.preventDefault();
+        this.closeMachineGui();
+      }
+      return;
+    }
+
     const key = this.resolveControlKey(event);
     const hotbarIndex = this.resolveHotbarIndex(event);
 
@@ -105,7 +125,7 @@ export class Game {
 
     if (key === "tab") {
       event.preventDefault();
-      if (this.hud.isMachineGuiOpen() || this.containerGui.isOpen() || this.unloaderGui.isOpen()) {
+      if (this.isMachineOverlayOpen()) {
         this.closeMachineGui();
       }
       const inventoryOpen = this.hud.toggleInventory();
@@ -118,7 +138,7 @@ export class Game {
 
     if (key === "m") {
       event.preventDefault();
-      if (this.hud.isMachineGuiOpen() || this.containerGui.isOpen() || this.unloaderGui.isOpen()) {
+      if (this.isMachineOverlayOpen()) {
         this.closeMachineGui();
       }
       const creativeOpen = this.hud.toggleCreativeMenu();
@@ -129,7 +149,7 @@ export class Game {
       return;
     }
 
-    if (key === "escape" && (this.hud.isMachineGuiOpen() || this.containerGui.isOpen() || this.unloaderGui.isOpen())) {
+    if (key === "escape" && this.isMachineOverlayOpen()) {
       event.preventDefault();
       this.closeMachineGui();
       return;
@@ -162,6 +182,10 @@ export class Game {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {
+    if (this.isTextInputFocused()) {
+      return;
+    }
+
     const key = this.resolveControlKey(event);
 
     if (key === "tab") {
@@ -373,6 +397,57 @@ export class Game {
     this.closeMachineGui();
   };
 
+  private readonly onProgrammableMachineTakeSlot = (request: ProgrammableMachineTakeSlotRequest): void => {
+    const machine = this.getOpenProgrammableMachine();
+    if (!machine) {
+      this.closeMachineGui();
+      return;
+    }
+
+    const state = machine.debugState;
+    const slot = request.section === "input"
+      ? state.inputSlots[request.slotIndex] ?? null
+      : state.outputSlots[request.slotIndex] ?? null;
+    if (!slot) {
+      return;
+    }
+
+    const amount = this.resolveMachineTransferAmount(slot.count, request.mode);
+    const extracted = request.section === "input"
+      ? machine.takeInputSlot(request.slotIndex, amount)
+      : machine.takeOutputSlot(request.slotIndex, amount);
+    if (!extracted) {
+      return;
+    }
+
+    this.player.inventory.add(extracted.itemId, extracted.count);
+    this.syncMachineGui();
+    this.updateHud();
+  };
+
+  private readonly onProgrammableMachineApply = (request: ProgrammableMachineApplyRequest): void => {
+    const target = this.openMachineGuiTarget;
+    const machine = this.getOpenProgrammableMachine();
+    if (!target || !machine) {
+      this.closeMachineGui();
+      return;
+    }
+
+    machine.applyProgramSource(request.source);
+    this.multiplayerClient?.sendAction({
+      kind: "set_program_source",
+      x: target.x,
+      y: target.y,
+      source: request.source,
+    });
+    this.syncMachineGui();
+    this.updateHud();
+  };
+
+  private readonly onProgrammableMachineClose = (): void => {
+    this.closeMachineGui();
+  };
+
   private readonly handleMachinePointer = (event: GridPointerEvent): void => {
     if (event.button !== 0 || !this.isWorldInputEnabled()) {
       return;
@@ -388,11 +463,16 @@ export class Game {
       tile.building.machineType === "drill" ||
       tile.building.machineType === "container" ||
       tile.building.machineType === "iron_chest" ||
-      tile.building.machineType === "unloader"
+      tile.building.machineType === "unloader" ||
+      tile.building.machineType === "programmable_machine"
     ) {
       if (
-        (tile.building.machineType === "container" || tile.building.machineType === "iron_chest") &&
-        this.shouldDeferContainerGuiForManualInsert(event.position.x, event.position.y, tile.building)
+        (
+          tile.building.machineType === "container" ||
+          tile.building.machineType === "iron_chest" ||
+          tile.building.machineType === "programmable_machine"
+        ) &&
+        this.shouldDeferMachineGuiForManualInsert(event.position.x, event.position.y, tile.building)
       ) {
         return;
       }
@@ -529,6 +609,7 @@ export class Game {
     this.tickSystem = new TickSystem(tickRate, this.multiplayerClient ? 40 : 10);
     this.playerSystem = new PlayerSystem();
     this.productionSystem = new ProductionSystem();
+    this.combatSystem = new CombatSystem();
 
     const beltSystem = new BeltSystem();
     this.transportSystem = new TransportSystem(beltSystem);
@@ -540,6 +621,7 @@ export class Game {
     this.renderer = new Renderer(host, this.world);
     this.hud = new HUD(host);
     this.containerGui = new ContainerGui(host);
+    this.programmableMachineGui = new ProgrammableMachineGui(host);
     this.unloaderGui = new UnloaderGui(host);
     this.unsubscribeInventoryTransfer = this.hud.onInventoryTransfer(this.onInventoryTransfer);
     this.unsubscribeCraftRequest = this.hud.onCraftRequest(this.onCraftRequest);
@@ -547,6 +629,9 @@ export class Game {
     this.unsubscribeContainerTakeSlot = this.containerGui.onTakeSlot(this.onContainerTakeSlot);
     this.unsubscribeContainerCraftRequest = this.containerGui.onCraftRequest(this.onContainerCraftRequest);
     this.unsubscribeContainerClose = this.containerGui.onClose(this.onContainerClose);
+    this.unsubscribeProgrammableMachineTakeSlot = this.programmableMachineGui.onTakeSlot(this.onProgrammableMachineTakeSlot);
+    this.unsubscribeProgrammableMachineApply = this.programmableMachineGui.onApply(this.onProgrammableMachineApply);
+    this.unsubscribeProgrammableMachineClose = this.programmableMachineGui.onClose(this.onProgrammableMachineClose);
     this.unsubscribeUnloaderFilterChange = this.unloaderGui.onFilterChange(this.onUnloaderFilterChange);
     this.unsubscribeUnloaderClose = this.unloaderGui.onClose(this.onUnloaderClose);
     this.mouse = new MouseInput(this.renderer.canvas, (x, y) => this.renderer.screenToGrid(x, y));
@@ -613,6 +698,9 @@ export class Game {
     this.unsubscribeContainerTakeSlot();
     this.unsubscribeContainerCraftRequest();
     this.unsubscribeContainerClose();
+    this.unsubscribeProgrammableMachineTakeSlot();
+    this.unsubscribeProgrammableMachineApply();
+    this.unsubscribeProgrammableMachineClose();
     this.unsubscribeUnloaderFilterChange();
     this.unsubscribeUnloaderClose();
     this.unsubscribeMachinePointer();
@@ -621,6 +709,7 @@ export class Game {
     this.placementInput.dispose();
     this.mouse.dispose();
     this.containerGui.dispose();
+    this.programmableMachineGui.dispose();
     this.unloaderGui.dispose();
     this.hud.dispose();
     this.renderer.dispose();
@@ -631,6 +720,7 @@ export class Game {
     this.productionSystem.update(this.world, deltaSeconds);
     this.transportSystem.update(this.world, deltaSeconds);
     this.world.advance(deltaSeconds);
+    this.combatSystem.update(this.world, this.player, deltaSeconds);
   }
 
   private updatePlayerControls(deltaSeconds: number): void {
@@ -684,7 +774,7 @@ export class Game {
     return key === "r";
   }
 
-  private shouldDeferContainerGuiForManualInsert(gridX: number, gridY: number, building: unknown): boolean {
+  private shouldDeferMachineGuiForManualInsert(gridX: number, gridY: number, building: unknown): boolean {
     if (!isInputMachine(building)) {
       return false;
     }
@@ -720,6 +810,15 @@ export class Game {
   }
 
   private applyReplicatedAction(action: MultiplayerReplicatedAction): void {
+    if (action.kind === "set_program_source") {
+      const tile = this.world.getTile(action.x, action.y);
+      if (!tile?.building || !isMachine(tile.building) || tile.building.machineType !== "programmable_machine") {
+        return;
+      }
+      (tile.building as ProgrammableMachine).applyProgramSource(action.source);
+      return;
+    }
+
     if (action.kind === "machine_insert") {
       const tile = this.world.getTile(action.x, action.y);
       if (!tile?.building || !isInputMachine(tile.building)) {
@@ -795,6 +894,12 @@ export class Game {
       case "unloader_item":
         this.world.placeUnloader(x, y, direction);
         return;
+      case "turret_item":
+        this.world.placeTurret(x, y, direction);
+        return;
+      case "programmable_machine_item":
+        this.world.placeProgrammableMachine(x, y, direction);
+        return;
       default:
         return;
     }
@@ -814,9 +919,7 @@ export class Game {
   private isAnyMenuOpen(): boolean {
     return (
       this.hud.isInventoryOpen() ||
-      this.hud.isMachineGuiOpen() ||
-      this.containerGui.isOpen() ||
-      this.unloaderGui.isOpen()
+      this.isMachineOverlayOpen()
     );
   }
 
@@ -961,8 +1064,10 @@ export class Game {
       fps: this.smoothedFps,
       tick: this.world.tick,
       worldItems: this.worldItemsSnapshot,
+      hostiles: this.combatSystem.getHostileCount(this.world),
+      nextWaveSeconds: this.combatSystem.getNextWaveInSeconds(this.world),
     });
-    this.hud.setPlayerPosition(this.player.x, this.player.y);
+    this.hud.setPlayerPosition(this.player.x, this.player.y, this.player.health, this.player.maxHealth);
     this.hud.setPlayerInventory(this.player.inventory.getView());
     this.hud.setSelectedQuickbarIndex(this.selectedQuickbarIndex);
     const activeCraft = this.activeCraft;
@@ -1092,6 +1197,11 @@ export class Game {
       case "router_item":
       case "unloader_item":
         return { id: "logistics", label: "Logistics" };
+      case "programmable_machine_item":
+        return { id: "logic", label: "Logic" };
+      case "ammo_rounds":
+      case "turret_item":
+        return { id: "defense", label: "Defense" };
       case "furnace_item":
       case "drill_item":
         return { id: "production", label: "Production" };
@@ -1203,12 +1313,25 @@ export class Game {
     return tile.building as Unloader;
   }
 
+  private getOpenProgrammableMachine(): ProgrammableMachine | null {
+    const target = this.openMachineGuiTarget;
+    if (!target || target.machineType !== "programmable_machine") {
+      return null;
+    }
+    const tile = this.world.getTile(target.x, target.y);
+    if (!tile?.building || !isMachine(tile.building) || tile.building.machineType !== "programmable_machine") {
+      return null;
+    }
+    return tile.building as ProgrammableMachine;
+  }
+
   private syncMachineGui(): void {
     const target = this.openMachineGuiTarget;
     if (!target) {
       this.hud.setFurnaceGui(null);
       this.hud.setDrillGui(null);
       this.containerGui.setView(null);
+      this.programmableMachineGui.setView(null);
       this.unloaderGui.setView(null);
       return;
     }
@@ -1223,6 +1346,7 @@ export class Game {
       const state = furnace.debugState;
       this.hud.setDrillGui(null);
       this.containerGui.setView(null);
+      this.programmableMachineGui.setView(null);
       this.unloaderGui.setView(null);
       this.hud.setFurnaceGui({
         gridX: target.x,
@@ -1248,6 +1372,7 @@ export class Game {
       const state = drill.debugState;
       this.hud.setFurnaceGui(null);
       this.containerGui.setView(null);
+      this.programmableMachineGui.setView(null);
       this.unloaderGui.setView(null);
       this.hud.setDrillGui({
         gridX: target.x,
@@ -1272,6 +1397,7 @@ export class Game {
       const state = container.debugState;
       this.hud.setFurnaceGui(null);
       this.hud.setDrillGui(null);
+      this.programmableMachineGui.setView(null);
       this.unloaderGui.setView(null);
       this.containerGui.setView({
         title: target.machineType === "iron_chest" ? "Iron Chest" : "Container",
@@ -1293,6 +1419,38 @@ export class Game {
       return;
     }
 
+    if (target.machineType === "programmable_machine") {
+      const machine = this.getOpenProgrammableMachine();
+      if (!machine) {
+        this.closeMachineGui();
+        return;
+      }
+
+      const state = machine.debugState;
+      this.hud.setFurnaceGui(null);
+      this.hud.setDrillGui(null);
+      this.containerGui.setView(null);
+      this.unloaderGui.setView(null);
+      this.programmableMachineGui.setView({
+        gridX: target.x,
+        gridY: target.y,
+        outputDirection: state.outputDirection,
+        inputSlots: state.inputSlots,
+        inputTotalCount: state.inputTotalCount,
+        inputCapacity: state.inputCapacity,
+        outputSlots: state.outputSlots,
+        outputCount: state.outputCount,
+        outputCapacity: state.outputCapacity,
+        programSource: state.programSource,
+        programVersion: state.programVersion,
+        activeProgramVersion: state.activeProgramVersion,
+        compileError: state.compileError,
+        runtimeError: state.runtimeError,
+        statusText: state.statusText,
+      });
+      return;
+    }
+
     const unloader = this.getOpenUnloader();
     if (!unloader) {
       this.closeMachineGui();
@@ -1303,6 +1461,7 @@ export class Game {
     this.hud.setFurnaceGui(null);
     this.hud.setDrillGui(null);
     this.containerGui.setView(null);
+    this.programmableMachineGui.setView(null);
     this.unloaderGui.setView({
       gridX: target.x,
       gridY: target.y,
@@ -1319,7 +1478,30 @@ export class Game {
     this.hud.setFurnaceGui(null);
     this.hud.setDrillGui(null);
     this.containerGui.setView(null);
+    this.programmableMachineGui.setView(null);
     this.unloaderGui.setView(null);
+  }
+
+  private isMachineOverlayOpen(): boolean {
+    return (
+      this.hud.isMachineGuiOpen() ||
+      this.containerGui.isOpen() ||
+      this.programmableMachineGui.isOpen() ||
+      this.unloaderGui.isOpen()
+    );
+  }
+
+  private isTextInputFocused(): boolean {
+    const activeElement = document.activeElement;
+    if (!activeElement) {
+      return false;
+    }
+    return (
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement ||
+      activeElement instanceof HTMLSelectElement ||
+      ((activeElement as HTMLElement).isContentEditable ?? false)
+    );
   }
 
   private updateWorldItemsSnapshot(deltaSeconds: number): void {

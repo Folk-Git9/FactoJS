@@ -53,6 +53,8 @@ export class Renderer {
   private readonly previewLayer = new THREE.Group();
   private readonly itemLayer = new THREE.Group();
   private readonly playerLayer = new THREE.Group();
+  private readonly hostileLayer = new THREE.Group();
+  private readonly effectsLayer = new THREE.Group();
 
   private readonly resourceBatches = new Map<ResourceItemId, ResourceBatch>();
   private resourceBatchCapacity = 0;
@@ -62,6 +64,8 @@ export class Renderer {
   private readonly itemTypes = new Map<string, string>();
   private playerNode: THREE.Object3D | null = null;
   private readonly remotePlayerNodes = new Map<string, THREE.Object3D>();
+  private readonly zombieNodes = new Map<string, THREE.Object3D>();
+  private readonly tracerNodes = new Map<string, THREE.Line>();
   private placementPreview: PlacementPreviewState | null = null;
   private previewNode: THREE.Object3D | null = null;
   private previewKind: "belt" | "router" | "machine" | null = null;
@@ -88,7 +92,16 @@ export class Renderer {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x161b22);
-    this.scene.add(this.staticLayer, this.resourceLayer, this.buildingLayer, this.previewLayer, this.itemLayer, this.playerLayer);
+    this.scene.add(
+      this.staticLayer,
+      this.resourceLayer,
+      this.buildingLayer,
+      this.previewLayer,
+      this.itemLayer,
+      this.playerLayer,
+      this.hostileLayer,
+      this.effectsLayer
+    );
     this.staticLayer.add(MeshFactory.createGrid(world.width, world.height));
     this.rebuildResourceBatches(256);
 
@@ -147,6 +160,8 @@ export class Renderer {
     this.syncItems(world, visibleBounds);
     this.syncPlayer(player);
     this.syncRemotePlayers(remotePlayers);
+    this.syncZombies(world);
+    this.syncTracers(world);
     this.webgl.render(this.scene, this.cameraController.camera);
   }
 
@@ -161,6 +176,18 @@ export class Renderer {
       this.playerLayer.remove(node);
     }
     this.remotePlayerNodes.clear();
+    for (const node of this.zombieNodes.values()) {
+      this.hostileLayer.remove(node);
+    }
+    this.zombieNodes.clear();
+    for (const line of this.tracerNodes.values()) {
+      this.effectsLayer.remove(line);
+      line.geometry.dispose();
+      if (line.material instanceof THREE.Material) {
+        line.material.dispose();
+      }
+    }
+    this.tracerNodes.clear();
     this.webgl.dispose();
     this.canvas.remove();
   }
@@ -529,6 +556,60 @@ export class Renderer {
       }
       this.playerLayer.remove(node);
       this.remotePlayerNodes.delete(id);
+    }
+  }
+
+  private syncZombies(world: World): void {
+    const seenIds = new Set<string>();
+
+    for (const zombie of world.zombies) {
+      seenIds.add(zombie.id);
+
+      let node = this.zombieNodes.get(zombie.id);
+      if (!node) {
+        node = MeshFactory.createZombie();
+        this.zombieNodes.set(zombie.id, node);
+        this.hostileLayer.add(node);
+      }
+
+      node.position.set(zombie.x, zombie.y, 0.095);
+    }
+
+    for (const [id, node] of this.zombieNodes.entries()) {
+      if (seenIds.has(id)) {
+        continue;
+      }
+      this.hostileLayer.remove(node);
+      this.zombieNodes.delete(id);
+    }
+  }
+
+  private syncTracers(world: World): void {
+    const seenIds = new Set<string>();
+
+    for (const tracer of world.tracers) {
+      seenIds.add(tracer.id);
+
+      let line = this.tracerNodes.get(tracer.id);
+      if (!line) {
+        line = MeshFactory.createShotTracer(tracer.fromX, tracer.fromY, tracer.toX, tracer.toY);
+        this.tracerNodes.set(tracer.id, line);
+        this.effectsLayer.add(line);
+      }
+
+      MeshFactory.updateShotTracer(line, tracer.fromX, tracer.fromY, tracer.toX, tracer.toY, tracer.opacity01);
+    }
+
+    for (const [id, line] of this.tracerNodes.entries()) {
+      if (seenIds.has(id)) {
+        continue;
+      }
+      this.effectsLayer.remove(line);
+      line.geometry.dispose();
+      if (line.material instanceof THREE.Material) {
+        line.material.dispose();
+      }
+      this.tracerNodes.delete(id);
     }
   }
 

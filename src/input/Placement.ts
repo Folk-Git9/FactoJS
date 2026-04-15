@@ -230,6 +230,38 @@ export class PlacementInputSystem {
       return;
     }
 
+    if (slot.itemId === "programmable_machine_item") {
+      if (!this.canPlaceAt(event.position.x, event.position.y, slot.itemId)) {
+        return;
+      }
+      if (this.world.placeProgrammableMachine(event.position.x, event.position.y, placementDirection)) {
+        this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "programmable_machine_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
+      }
+      return;
+    }
+
+    if (slot.itemId === "turret_item") {
+      if (!this.canPlaceAt(event.position.x, event.position.y, slot.itemId)) {
+        return;
+      }
+      if (this.world.placeTurret(event.position.x, event.position.y, placementDirection)) {
+        this.player.inventory.consumeHotbarItem(hotbarIndex, 1);
+        this.onPlacement?.({
+          itemId: "turret_item",
+          x: event.position.x,
+          y: event.position.y,
+          direction: placementDirection,
+        });
+      }
+      return;
+    }
+
     if (tile.building && isInputMachine(tile.building)) {
       const inputDirection = this.getInputDirection(event.position.x, event.position.y);
       if (tile.building.canAcceptInput(slot.itemId, inputDirection)) {
@@ -281,6 +313,12 @@ export class PlacementInputSystem {
       return "machine";
     }
     if (itemId === "unloader_item") {
+      return "machine";
+    }
+    if (itemId === "programmable_machine_item") {
+      return "machine";
+    }
+    if (itemId === "turret_item") {
       return "machine";
     }
     return null;

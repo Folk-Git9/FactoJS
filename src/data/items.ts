@@ -3,13 +3,16 @@ export type ItemId =
   | "iron_plate"
   | "stone"
   | "coal_ore"
+  | "ammo_rounds"
   | "belt_item"
   | "furnace_item"
   | "router_item"
   | "drill_item"
   | "container_item"
   | "iron_chest_item"
-  | "unloader_item";
+  | "unloader_item"
+  | "turret_item"
+  | "programmable_machine_item";
 
 export interface ItemDefinition {
   id: ItemId;
@@ -32,6 +35,11 @@ export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
     id: "coal_ore",
     name: "Coal Ore",
     color: 0x3f434a,
+  },
+  ammo_rounds: {
+    id: "ammo_rounds",
+    name: "Ammo Rounds",
+    color: 0xd8c16f,
   },
   belt_item: {
     id: "belt_item",
@@ -68,6 +76,16 @@ export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
     name: "Unloader",
     color: 0xcd9f59,
   },
+  turret_item: {
+    id: "turret_item",
+    name: "Turret",
+    color: 0xc66a4b,
+  },
+  programmable_machine_item: {
+    id: "programmable_machine_item",
+    name: "Programmable Machine",
+    color: 0x6fa8dc,
+  },
   iron_plate: {
     id: "iron_plate",
     name: "Iron Plate",
@@ -83,7 +101,9 @@ export type PlaceableItemId =
   | "drill_item"
   | "container_item"
   | "iron_chest_item"
-  | "unloader_item";
+  | "unloader_item"
+  | "turret_item"
+  | "programmable_machine_item";
 
 export const RESOURCE_ITEM_IDS: ResourceItemId[] = ["stone", "iron_ore", "coal_ore"];
 export const PLACEABLE_ITEM_IDS: PlaceableItemId[] = [
@@ -94,6 +114,8 @@ export const PLACEABLE_ITEM_IDS: PlaceableItemId[] = [
   "container_item",
   "iron_chest_item",
   "unloader_item",
+  "turret_item",
+  "programmable_machine_item",
 ];
 
 export const getItemDefinition = (itemId: ItemId): ItemDefinition => ITEM_DEFINITIONS[itemId];
@@ -106,6 +128,8 @@ export const isPlaceableItemId = (itemId: ItemId): itemId is PlaceableItemId => 
     itemId === "drill_item" ||
     itemId === "container_item" ||
     itemId === "iron_chest_item" ||
-    itemId === "unloader_item"
+    itemId === "unloader_item" ||
+    itemId === "turret_item" ||
+    itemId === "programmable_machine_item"
   );
 };

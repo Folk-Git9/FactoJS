@@ -31,6 +31,12 @@ export type MultiplayerReplicatedAction =
     x: number;
     y: number;
     amount: number;
+  }
+  | {
+    kind: "set_program_source";
+    x: number;
+    y: number;
+    source: string;
   };
 
 export type ClientToServerMessage =

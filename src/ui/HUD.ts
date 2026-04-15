@@ -12,6 +12,8 @@ export interface HudStats {
   fps: number;
   tick: number;
   worldItems: number;
+  hostiles?: number;
+  nextWaveSeconds?: number;
 }
 
 export interface InventoryTransferRequest {
@@ -113,6 +115,7 @@ export class HUD {
   private readonly playerLine: HTMLDivElement;
   private readonly cellLine: HTMLDivElement;
   private readonly statsLine: HTMLDivElement;
+  private readonly combatLine: HTMLDivElement;
   private readonly resourceLine: HTMLDivElement;
   private readonly miningLine: HTMLDivElement;
   private readonly miningBarTrack: HTMLDivElement;
@@ -207,6 +210,16 @@ export class HUD {
       this.isCtrlHeld = false;
     }
   };
+  private readonly onWindowBlur = (): void => {
+    this.resetModifierState();
+    this.pendingDragModifiers = null;
+  };
+  private readonly onDocumentVisibilityChange = (): void => {
+    if (document.visibilityState !== "visible") {
+      this.resetModifierState();
+      this.pendingDragModifiers = null;
+    }
+  };
 
   private lastInventoryView: PlayerInventoryView = {
     hotbar: Array.from({ length: HOTBAR_SLOT_COUNT }, () => null),
@@ -233,6 +246,7 @@ export class HUD {
     this.playerLine = document.createElement("div");
     this.cellLine = document.createElement("div");
     this.statsLine = document.createElement("div");
+    this.combatLine = document.createElement("div");
     this.resourceLine = document.createElement("div");
     this.miningLine = document.createElement("div");
     this.miningBarTrack = document.createElement("div");
@@ -247,6 +261,7 @@ export class HUD {
     //   "WASD move, hold RMB mine/pick building, LMB place/insert, R rotate build, 1-0 select slot, F collect, Q/E or wheel zoom, TAB inventory";
 
     this.modeLine.textContent = "Mode: Mining";
+    this.combatLine.textContent = "Combat: calm";
     this.resourceLine.textContent = "Resource: -";
     this.miningLine.textContent = "Mining: -";
     this.miningBarTrack.style.height = "6px";
@@ -275,6 +290,7 @@ export class HUD {
       this.playerLine,
       this.cellLine,
       this.statsLine,
+      this.combatLine,
       this.resourceLine,
       // this.controlsLine
     );
@@ -357,6 +373,8 @@ export class HUD {
     window.addEventListener("resize", this.onWindowResize);
     window.addEventListener("keydown", this.onWindowKeyDown);
     window.addEventListener("keyup", this.onWindowKeyUp);
+    window.addEventListener("blur", this.onWindowBlur);
+    document.addEventListener("visibilitychange", this.onDocumentVisibilityChange);
 
     this.inventoryOverlay = document.createElement("div");
     this.inventoryOverlay.style.position = "fixed";
@@ -852,12 +870,27 @@ export class HUD {
     this.cellLine.textContent = position ? `Cursor: (${position.x}, ${position.y})` : "Cursor: -";
   }
 
-  setPlayerPosition(x: number, y: number): void {
-    this.playerLine.textContent = `Player: (${x.toFixed(2)}, ${y.toFixed(2)})`;
+  setPlayerPosition(x: number, y: number, health?: number, maxHealth?: number): void {
+    const healthLabel =
+      health !== undefined && maxHealth !== undefined
+        ? ` | HP: ${Math.max(0, health).toFixed(0)} / ${Math.max(1, maxHealth).toFixed(0)}`
+        : "";
+    this.playerLine.textContent = `Player: (${x.toFixed(2)}, ${y.toFixed(2)})${healthLabel}`;
   }
 
   setStats(stats: HudStats): void {
     this.statsLine.textContent = `FPS: ${stats.fps.toFixed(1)} | Tick: ${stats.tick} | Items on conveyors: ${stats.worldItems}`;
+    if (stats.hostiles === undefined && stats.nextWaveSeconds === undefined) {
+      this.combatLine.textContent = "Combat: calm";
+      return;
+    }
+
+    const hostiles = Math.max(0, Math.floor(stats.hostiles ?? 0));
+    const nextWaveSeconds = Math.max(0, stats.nextWaveSeconds ?? 0);
+    const nextWaveLabel = nextWaveSeconds >= 60
+      ? `${Math.floor(nextWaveSeconds / 60)}m ${Math.floor(nextWaveSeconds % 60)}s`
+      : `${nextWaveSeconds.toFixed(0)}s`;
+    this.combatLine.textContent = `Combat: hostiles ${hostiles} | next wave in ${nextWaveLabel}`;
   }
 
   setHoveredResource(resource: { type: ItemId; amount: number } | null): void {
@@ -1160,6 +1193,8 @@ export class HUD {
     window.removeEventListener("resize", this.onWindowResize);
     window.removeEventListener("keydown", this.onWindowKeyDown);
     window.removeEventListener("keyup", this.onWindowKeyUp);
+    window.removeEventListener("blur", this.onWindowBlur);
+    document.removeEventListener("visibilitychange", this.onDocumentVisibilityChange);
     this.root.remove();
     this.quickbarRoot.remove();
     this.activityRoot.remove();
@@ -1322,8 +1357,8 @@ export class HUD {
       pending !== null &&
       pending.section === section &&
       pending.index === index;
-    const shiftKey = (usePending ? pending.shiftKey : false) || event.shiftKey || this.isShiftHeld;
-    const ctrlKey = (usePending ? pending.ctrlKey : false) || event.ctrlKey || this.isCtrlHeld;
+    const shiftKey = usePending ? pending.shiftKey : event.shiftKey;
+    const ctrlKey = usePending ? pending.ctrlKey : event.ctrlKey;
     this.dragAmount = this.resolveDragAmount(stack.count, shiftKey, ctrlKey);
     this.updateDragUi();
 
@@ -1476,6 +1511,11 @@ export class HUD {
   private resolveTransferCount(stackCount: number): number {
     const requested = this.dragAmount ?? stackCount;
     return Math.max(1, Math.min(stackCount, requested));
+  }
+
+  private resetModifierState(): void {
+    this.isShiftHeld = false;
+    this.isCtrlHeld = false;
   }
 
   private applyDragHighlights(

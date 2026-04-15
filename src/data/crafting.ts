@@ -7,7 +7,10 @@ export type CraftRecipeId =
   | "craft_drill"
   | "craft_container"
   | "craft_iron_chest"
-  | "craft_unloader";
+  | "craft_unloader"
+  | "craft_turret"
+  | "craft_ammo_rounds"
+  | "craft_programmable_machine";
 
 export interface CraftRecipe {
   id: CraftRecipeId;
@@ -105,6 +108,45 @@ export const CRAFT_RECIPES: CraftRecipe[] = [
     },
     output: {
       item: "unloader_item",
+      count: 1,
+    },
+  },
+  {
+    id: "craft_turret",
+    name: "Turret",
+    craftSeconds: 3.2,
+    input: {
+      iron_plate: 10,
+      stone: 4,
+    },
+    output: {
+      item: "turret_item",
+      count: 1,
+    },
+  },
+  {
+    id: "craft_ammo_rounds",
+    name: "Ammo Rounds",
+    craftSeconds: 1.1,
+    input: {
+      iron_plate: 1,
+      coal_ore: 1,
+    },
+    output: {
+      item: "ammo_rounds",
+      count: 8,
+    },
+  },
+  {
+    id: "craft_programmable_machine",
+    name: "Programmable Machine",
+    craftSeconds: 2.8,
+    input: {
+      iron_plate: 4,
+      stone: 2,
+    },
+    output: {
+      item: "programmable_machine_item",
       count: 1,
     },
   },

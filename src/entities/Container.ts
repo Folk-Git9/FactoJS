@@ -119,6 +119,14 @@ export class Container implements Machine, InputMachine {
     return null;
   }
 
+  takeItem(itemId: ItemId, amount = 1): number {
+    const requested = Math.max(0, Math.floor(amount));
+    if (requested <= 0) {
+      return 0;
+    }
+    return this.removeFromSlots(this.slots, itemId, requested);
+  }
+
   getCount(itemId: ItemId): number {
     let count = 0;
     for (const slot of this.slots) {
