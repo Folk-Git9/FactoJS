@@ -96,7 +96,10 @@ export class World {
     }
 
     const previous = tile.building;
-    const router = new Router(direction);
+    const router = new Router(direction, () => ({
+      tick: this.tick,
+      time: this.elapsedSeconds,
+    }));
     if (isConveyorNode(previous) && previous.item) {
       router.acceptItem(previous.item, previous.progress, previous.entryDirection);
     }

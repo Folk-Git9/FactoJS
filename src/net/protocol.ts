@@ -37,6 +37,12 @@ export type MultiplayerReplicatedAction =
     x: number;
     y: number;
     source: string;
+  }
+  | {
+    kind: "set_router_program_source";
+    x: number;
+    y: number;
+    source: string;
   };
 
 export type ClientToServerMessage =

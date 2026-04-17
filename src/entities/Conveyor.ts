@@ -3,6 +3,10 @@ import type { Item } from "./Item";
 
 export type ConveyorKind = "belt" | "router";
 
+export interface ConveyorRoutingOptions {
+  preview?: boolean;
+}
+
 export interface ConveyorNode {
   readonly kind: ConveyorKind;
   direction: Direction;
@@ -14,7 +18,7 @@ export interface ConveyorNode {
   canAcceptItem(): boolean;
   acceptItem(item: Item, progress?: number, entryDirection?: Direction): void;
   releaseItem(): Item | null;
-  getOutputDirections(entryDirection: Direction): Direction[];
+  getOutputDirections(entryDirection: Direction, itemType?: Item["type"], options?: ConveyorRoutingOptions): Direction[];
   onItemDispatched?(outputDirection: Direction): void;
 }
 

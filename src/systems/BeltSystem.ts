@@ -56,7 +56,7 @@ export class BeltSystem {
     if (!sourceItemType) {
       return;
     }
-    const outputDirections = source.getOutputDirections(source.entryDirection);
+    const outputDirections = source.getOutputDirections(source.entryDirection, sourceItemType);
     let hasOutOfBoundsOutput = false;
 
     for (const outputDirection of outputDirections) {
@@ -134,7 +134,7 @@ export class BeltSystem {
       return true;
     }
 
-    const outputDirections = routerTile.building.getOutputDirections(entryDirection);
+    const outputDirections = routerTile.building.getOutputDirections(entryDirection, itemType, { preview: true });
     for (const outputDirection of outputDirections) {
       const forwardPosition = world.getNeighborPosition(routerX, routerY, outputDirection);
       if (!forwardPosition) {
