@@ -1,2 +1,20 @@
-dist
-node_modules
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Tests
+coverage/
+
+# Local environment
+*.local
+.env
+.env.*
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
