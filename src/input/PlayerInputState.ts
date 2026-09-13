@@ -4,4 +4,6 @@ export interface PlayerInputState {
 
     aimX: number;
     aimY: number;
+
+    placePressed: boolean;
 }

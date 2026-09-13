@@ -6,6 +6,7 @@ import './style.css';
 
 const WORLD_MAP_CONFIG: WorldMapConfig = {
     type: 'infinite',
+    seed: 199,
 };
 
 async function initialize(): Promise<void> {
@@ -37,7 +38,7 @@ async function initialize(): Promise<void> {
 
     appElement.appendChild(app.canvas);
 
-    const game = new FactoJS(app, WORLD_MAP_CONFIG);
+    const game = new FactoJS(app, appElement, WORLD_MAP_CONFIG);
 
     game.start();
 

@@ -14,6 +14,8 @@ export class InputManager {
 
         aimX: 0,
         aimY: 0,
+
+        placePressed: false,
     };
 
     private readonly pointerPosition: PointerPosition = {
@@ -22,6 +24,7 @@ export class InputManager {
     };
 
     private wheelDelta = 0;
+    private placePressed = false;
 
     constructor(private readonly canvas: HTMLCanvasElement) {
         window.addEventListener('keydown', this.onKeyDown);
@@ -30,12 +33,14 @@ export class InputManager {
 
         this.canvas.addEventListener('pointermove', this.onPointerMove);
 
+        this.canvas.addEventListener('pointerdown', this.onPointerDown);
+
         this.canvas.addEventListener('wheel', this.onWheel, {
             passive: false,
         });
     }
 
-    getPlayerInput(aimX: number, aimY: number): Readonly<PlayerInputState> {
+    getPlayerInput(aimX: number, aimY: number, placePressed: boolean): Readonly<PlayerInputState> {
         let x = 0;
         let y = 0;
 
@@ -66,6 +71,8 @@ export class InputManager {
         this.playerInput.aimX = aimX;
         this.playerInput.aimY = aimY;
 
+        this.playerInput.placePressed = placePressed;
+
         return this.playerInput;
     }
 
@@ -81,12 +88,24 @@ export class InputManager {
         return delta;
     }
 
+    consumePlacePressed(): boolean {
+        if (!this.placePressed) {
+            return false;
+        }
+
+        this.placePressed = false;
+
+        return true;
+    }
+
     destroy(): void {
         window.removeEventListener('keydown', this.onKeyDown);
         window.removeEventListener('keyup', this.onKeyUp);
         window.removeEventListener('blur', this.onBlur);
 
         this.canvas.removeEventListener('pointermove', this.onPointerMove);
+
+        this.canvas.removeEventListener('pointerdown', this.onPointerDown);
 
         this.canvas.removeEventListener('wheel', this.onWheel);
     }
@@ -109,6 +128,12 @@ export class InputManager {
         this.pointerPosition.x = event.clientX - rect.left;
 
         this.pointerPosition.y = event.clientY - rect.top;
+    };
+
+    private readonly onPointerDown = (event: PointerEvent): void => {
+        if (event.button === 0) {
+            this.placePressed = true;
+        }
     };
 
     private readonly onWheel = (event: WheelEvent): void => {

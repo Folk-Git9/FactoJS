@@ -8,8 +8,9 @@ import type { WorldMapBounds } from './WorldMapBounds';
 
 import { WorldGenerator } from './WorldGenerator';
 
-import { CHUNK_SIZE_TILES, CHUNK_SIZE_WORLD } from './constants';
+import { CHUNK_SIZE_TILES, CHUNK_SIZE_WORLD, TILE_SIZE_WORLD } from './constants';
 
+import type { Chunk } from './Chunk';
 import { validateWorldMapConfig } from './WorldMapConfig';
 
 const DEFAULT_WORLD_SEED = 0x4f31a9c7;
@@ -30,7 +31,13 @@ export class WorldMap {
 
         this.bounds = createBounds(config);
 
-        this.chunks = new ChunkManager(new WorldGenerator(DEFAULT_WORLD_SEED));
+        this.chunks = new ChunkManager(
+            new WorldGenerator(config.seed ? config.seed : DEFAULT_WORLD_SEED),
+        );
+    }
+
+    get loadedChunkCount(): number {
+        return this.chunks.size;
     }
 
     getChunk(chunkX: number, chunkY: number) {
@@ -171,6 +178,63 @@ export class WorldMap {
             maxY,
         };
     }
+
+    worldToTileX(worldX: number): number {
+        return Math.floor(worldX / TILE_SIZE_WORLD);
+    }
+
+    worldToTileY(worldY: number): number {
+        return Math.floor(worldY / TILE_SIZE_WORLD);
+    }
+
+    isTileInBounds(tileX: number, tileY: number): boolean {
+        const chunkX = tileToChunkCoordinate(tileX);
+
+        const chunkY = tileToChunkCoordinate(tileY);
+
+        return this.isChunkInBounds(chunkX, chunkY);
+    }
+
+    getBuildingIdAtTile(tileX: number, tileY: number): number {
+        if (!this.isTileInBounds(tileX, tileY)) {
+            return 0;
+        }
+
+        const chunkX = tileToChunkCoordinate(tileX);
+
+        const chunkY = tileToChunkCoordinate(tileY);
+
+        const chunk = this.getChunk(chunkX, chunkY);
+
+        if (chunk === undefined) {
+            return 0;
+        }
+
+        return chunk.getOccupancy(tileToLocalCoordinate(tileX), tileToLocalCoordinate(tileY));
+    }
+
+    setBuildingIdAtTile(tileX: number, tileY: number, buildingId: number): void {
+        if (!this.isTileInBounds(tileX, tileY)) {
+            throw new RangeError(`Tile (${tileX}, ${tileY}) is outside the world`);
+        }
+
+        const chunk = this.getOrCreateChunk(
+            tileToChunkCoordinate(tileX),
+            tileToChunkCoordinate(tileY),
+        );
+
+        chunk.setOccupancy(tileToLocalCoordinate(tileX), tileToLocalCoordinate(tileY), buildingId);
+    }
+
+    getOrCreateChunk(chunkX: number, chunkY: number): Chunk {
+        assertChunkCoordinate(chunkX, chunkY);
+
+        if (!this.isChunkInBounds(chunkX, chunkY)) {
+            throw new RangeError(`Chunk (${chunkX}, ${chunkY}) is outside the world`);
+        }
+
+        return this.chunks.getOrCreate(chunkX, chunkY);
+    }
 }
 
 function expandChunkRange(range: ChunkRange, amount: number): ChunkRange {
@@ -223,11 +287,14 @@ function cloneConfig(config: WorldMapConfig): WorldMapConfig {
     if (config.type === 'infinite') {
         return {
             type: 'infinite',
+            seed: config.seed,
         };
     }
 
     return {
         type: 'bounded',
+
+        seed: config.seed,
 
         widthTiles: config.widthTiles,
 
@@ -239,4 +306,14 @@ function assertChunkCoordinate(x: number, y: number): void {
     if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) {
         throw new RangeError('Chunk coordinates must be safe integers');
     }
+}
+
+function tileToChunkCoordinate(tile: number): number {
+    return Math.floor(tile / CHUNK_SIZE_TILES);
+}
+
+function tileToLocalCoordinate(tile: number): number {
+    const chunk = tileToChunkCoordinate(tile);
+
+    return tile - chunk * CHUNK_SIZE_TILES;
 }

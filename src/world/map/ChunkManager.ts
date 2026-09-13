@@ -7,6 +7,16 @@ export class ChunkManager {
 
     constructor(private readonly generator: WorldGenerator) {}
 
+    get size(): number {
+        let size = 0;
+
+        for (const column of this.chunks.values()) {
+            size += column.size;
+        }
+
+        return size;
+    }
+
     get(chunkX: number, chunkY: number): Chunk | undefined {
         return this.chunks.get(chunkX)?.get(chunkY);
     }
@@ -41,14 +51,14 @@ export class ChunkManager {
 
     unloadOutside(range: ChunkRange): void {
         for (const [chunkX, column] of this.chunks) {
-            if (chunkX < range.minX || chunkX > range.maxX) {
-                this.chunks.delete(chunkX);
+            for (const [chunkY, chunk] of column) {
+                const outside =
+                    chunkX < range.minX ||
+                    chunkX > range.maxX ||
+                    chunkY < range.minY ||
+                    chunkY > range.maxY;
 
-                continue;
-            }
-
-            for (const chunkY of column.keys()) {
-                if (chunkY < range.minY || chunkY > range.maxY) {
+                if (outside && !chunk.hasOccupancy) {
                     column.delete(chunkY);
                 }
             }

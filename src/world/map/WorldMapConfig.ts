@@ -2,10 +2,12 @@ import { CHUNK_SIZE_TILES } from './constants';
 
 export interface InfiniteWorldMapConfig {
     readonly type: 'infinite';
+    readonly seed: number;
 }
 
 export interface BoundedWorldMapConfig {
     readonly type: 'bounded';
+    readonly seed: number;
 
     readonly widthTiles: number;
     readonly heightTiles: number;

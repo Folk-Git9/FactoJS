@@ -2,9 +2,11 @@ import { Container, type Application } from 'pixi.js';
 
 import type { World } from '../world/World';
 
+import { BuildingRenderer } from './BuildingRenderer';
 import { Camera2D } from './Camera2D';
 import { Frustum2D } from './Frustum2D';
 import { GridRenderer } from './GridRenderer';
+import { PlacementPreviewRenderer } from './PlacementPreviewRenderer';
 import { PlayerRenderer } from './PlayerRenderer';
 import { TerrainRenderer } from './TerrainRenderer';
 
@@ -15,7 +17,9 @@ export class WorldRenderer {
 
     readonly frustum = new Frustum2D();
 
-    private readonly root = new Container();
+    private readonly backgroundRoot = new Container();
+
+    private readonly foregroundRoot = new Container();
 
     private readonly terrainLayer = new Container();
 
@@ -25,22 +29,41 @@ export class WorldRenderer {
 
     private readonly effectsLayer = new Container();
 
+    private readonly buildingLayer = new Container();
+
+    private readonly placementLayer = new Container();
+
     private readonly terrainRenderer: TerrainRenderer;
 
     private readonly gridRenderer: GridRenderer;
 
     private readonly playerRenderer: PlayerRenderer;
 
-    constructor(private readonly app: Application) {
-        this.root.addChild(this.terrainLayer, this.gridLayer, this.entityLayer, this.effectsLayer);
+    private readonly buildingRenderer: BuildingRenderer;
 
-        this.app.stage.addChild(this.root);
+    private readonly placementPreviewRenderer: PlacementPreviewRenderer;
+
+    constructor(private readonly app: Application) {
+        this.backgroundRoot.addChild(this.terrainLayer);
+
+        this.foregroundRoot.addChild(
+            this.buildingLayer,
+            this.placementLayer,
+            this.entityLayer,
+            this.effectsLayer,
+        );
+
+        this.app.stage.addChild(this.backgroundRoot, this.gridLayer, this.foregroundRoot);
 
         this.terrainRenderer = new TerrainRenderer(this.terrainLayer);
 
         this.gridRenderer = new GridRenderer(this.gridLayer);
 
         this.playerRenderer = new PlayerRenderer(this.entityLayer);
+
+        this.buildingRenderer = new BuildingRenderer(this.buildingLayer);
+
+        this.placementPreviewRenderer = new PlacementPreviewRenderer(this.placementLayer);
     }
 
     screenToWorld(
@@ -74,13 +97,30 @@ export class WorldRenderer {
 
         this.frustum.update(this.camera, viewport.width, viewport.height, CULL_PADDING_PIXELS);
 
-        this.camera.apply(this.root, viewport.width, viewport.height);
+        this.camera.apply(this.backgroundRoot, viewport.width, viewport.height);
+
+        this.camera.apply(this.foregroundRoot, viewport.width, viewport.height);
     }
 
     render(world: World, interpolationAlpha: number): void {
         this.terrainRenderer.render(world.map, this.frustum);
 
-        this.gridRenderer.render(this.frustum, world.map);
+        const viewport = this.app.renderer.screen;
+
+        this.gridRenderer.render(
+            this.camera,
+            this.frustum,
+            world.map,
+            viewport.width,
+            viewport.height,
+            this.app.renderer.resolution,
+        );
+
+        this.buildingRenderer.render(world, this.frustum);
+
+        this.placementPreviewRenderer.render(world);
+
+        this.playerRenderer.render(world.player, interpolationAlpha, this.frustum);
 
         this.playerRenderer.render(world.player, interpolationAlpha, this.frustum);
     }
@@ -88,11 +128,23 @@ export class WorldRenderer {
     destroy(): void {
         this.terrainRenderer.destroy();
 
+        this.buildingRenderer.destroy();
+
+        this.placementPreviewRenderer.destroy();
+
         this.playerRenderer.destroy();
 
-        this.app.stage.removeChild(this.root);
+        this.app.stage.removeChild(this.backgroundRoot, this.gridLayer, this.foregroundRoot);
 
-        this.root.destroy({
+        this.backgroundRoot.destroy({
+            children: true,
+        });
+
+        this.gridLayer.destroy({
+            children: true,
+        });
+
+        this.foregroundRoot.destroy({
             children: true,
         });
     }
