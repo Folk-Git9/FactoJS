@@ -1,7 +1,12 @@
 import { Application } from 'pixi.js';
 import { FactoJS } from './core/FactoJS';
+import type { WorldMapConfig } from './world/map/WorldMapConfig';
 
 import './style.css';
+
+const WORLD_MAP_CONFIG: WorldMapConfig = {
+    type: 'infinite',
+};
 
 async function initialize(): Promise<void> {
     const appElement = document.querySelector<HTMLDivElement>('#app');
@@ -32,7 +37,10 @@ async function initialize(): Promise<void> {
 
     appElement.appendChild(app.canvas);
 
-    const game = new FactoJS(app);
+    const game = new FactoJS(
+        app,
+        WORLD_MAP_CONFIG,
+    );
 
     game.start();
 
