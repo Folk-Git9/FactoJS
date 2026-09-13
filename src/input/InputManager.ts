@@ -35,10 +35,7 @@ export class InputManager {
         });
     }
 
-    getPlayerInput(
-        aimX: number,
-        aimY: number,
-    ): Readonly<PlayerInputState> {
+    getPlayerInput(aimX: number, aimY: number): Readonly<PlayerInputState> {
         let x = 0;
         let y = 0;
 
@@ -89,26 +86,16 @@ export class InputManager {
         window.removeEventListener('keyup', this.onKeyUp);
         window.removeEventListener('blur', this.onBlur);
 
-        this.canvas.removeEventListener(
-            'pointermove',
-            this.onPointerMove,
-        );
+        this.canvas.removeEventListener('pointermove', this.onPointerMove);
 
-        this.canvas.removeEventListener(
-            'wheel',
-            this.onWheel,
-        );
+        this.canvas.removeEventListener('wheel', this.onWheel);
     }
 
-    private readonly onKeyDown = (
-        event: KeyboardEvent,
-    ): void => {
+    private readonly onKeyDown = (event: KeyboardEvent): void => {
         this.pressedKeys.add(event.code);
     };
 
-    private readonly onKeyUp = (
-        event: KeyboardEvent,
-    ): void => {
+    private readonly onKeyUp = (event: KeyboardEvent): void => {
         this.pressedKeys.delete(event.code);
     };
 
@@ -116,22 +103,15 @@ export class InputManager {
         this.pressedKeys.clear();
     };
 
-    private readonly onPointerMove = (
-        event: PointerEvent,
-    ): void => {
-        const rect =
-            this.canvas.getBoundingClientRect();
+    private readonly onPointerMove = (event: PointerEvent): void => {
+        const rect = this.canvas.getBoundingClientRect();
 
-        this.pointerPosition.x =
-            event.clientX - rect.left;
+        this.pointerPosition.x = event.clientX - rect.left;
 
-        this.pointerPosition.y =
-            event.clientY - rect.top;
+        this.pointerPosition.y = event.clientY - rect.top;
     };
 
-    private readonly onWheel = (
-        event: WheelEvent,
-    ): void => {
+    private readonly onWheel = (event: WheelEvent): void => {
         event.preventDefault();
 
         this.wheelDelta += event.deltaY;

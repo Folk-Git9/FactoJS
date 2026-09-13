@@ -37,85 +37,39 @@ export class Frustum2D {
         viewportHeight: number,
         paddingPixels = 0,
     ): void {
-        const halfWidth =
-            viewportWidth / (2 * camera.zoom);
+        const halfWidth = viewportWidth / (2 * camera.zoom);
 
-        const halfHeight =
-            viewportHeight / (2 * camera.zoom);
+        const halfHeight = viewportHeight / (2 * camera.zoom);
 
-        const padding =
-            paddingPixels / camera.zoom;
+        const padding = paddingPixels / camera.zoom;
 
-        this._left =
-            camera.x -
-            halfWidth -
-            padding;
+        this._left = camera.x - halfWidth - padding;
 
-        this._right =
-            camera.x +
-            halfWidth +
-            padding;
+        this._right = camera.x + halfWidth + padding;
 
-        this._top =
-            camera.y -
-            halfHeight -
-            padding;
+        this._top = camera.y - halfHeight - padding;
 
-        this._bottom =
-            camera.y +
-            halfHeight +
-            padding;
+        this._bottom = camera.y + halfHeight + padding;
     }
 
-    containsPoint(
-        x: number,
-        y: number,
-    ): boolean {
-        return (
-            x >= this._left &&
-            x <= this._right &&
-            y >= this._top &&
-            y <= this._bottom
-        );
+    containsPoint(x: number, y: number): boolean {
+        return x >= this._left && x <= this._right && y >= this._top && y <= this._bottom;
     }
 
-    intersectsCircle(
-        x: number,
-        y: number,
-        radius: number,
-    ): boolean {
-        const closestX = clamp(
-            x,
-            this._left,
-            this._right,
-        );
+    intersectsCircle(x: number, y: number, radius: number): boolean {
+        const closestX = clamp(x, this._left, this._right);
 
-        const closestY = clamp(
-            y,
-            this._top,
-            this._bottom,
-        );
+        const closestY = clamp(y, this._top, this._bottom);
 
         const dx = x - closestX;
         const dy = y - closestY;
 
-        return (
-            dx * dx + dy * dy <=
-            radius * radius
-        );
+        return dx * dx + dy * dy <= radius * radius;
     }
 
-    intersectsAabb(
-        minX: number,
-        minY: number,
-        maxX: number,
-        maxY: number,
-    ): boolean {
+    intersectsAabb(minX: number, minY: number, maxX: number, maxY: number): boolean {
         return (
-            maxX >= this._left &&
-            minX <= this._right &&
-            maxY >= this._top &&
-            minY <= this._bottom
+            maxX >= this._left && minX <= this._right && maxY >= this._top && minY <= this._bottom
         );
     }
 }

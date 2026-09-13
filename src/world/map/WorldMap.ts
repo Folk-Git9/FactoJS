@@ -1,197 +1,101 @@
-import { Chunk } from './Chunk';
-
 import type { ChunkRange } from './ChunkRange';
-import type {
-    WorldMapBounds,
-} from './WorldMapBounds';
-import type {
-    WorldMapConfig,
-} from './WorldMapConfig';
 
-import {
-    CHUNK_SIZE_TILES,
-    CHUNK_SIZE_WORLD,
-} from './constants';
+import { ChunkManager } from './ChunkManager';
 
-import {
-    validateWorldMapConfig,
-} from './WorldMapConfig';
+import type { WorldMapConfig } from './WorldMapConfig';
+
+import type { WorldMapBounds } from './WorldMapBounds';
+
+import { WorldGenerator } from './WorldGenerator';
+
+import { CHUNK_SIZE_TILES, CHUNK_SIZE_WORLD } from './constants';
+
+import { validateWorldMapConfig } from './WorldMapConfig';
+
+const DEFAULT_WORLD_SEED = 0x4f31a9c7;
+
+const LOAD_PADDING_CHUNKS = 1;
+const UNLOAD_PADDING_CHUNKS = 2;
 
 export class WorldMap {
     readonly config: WorldMapConfig;
     readonly bounds: WorldMapBounds | null;
 
-    private readonly chunks =
-        new Map<
-            number,
-            Map<number, Chunk>
-        >();
+    private readonly chunks: ChunkManager;
 
-    constructor(
-        config: WorldMapConfig,
-    ) {
+    constructor(config: WorldMapConfig) {
         validateWorldMapConfig(config);
 
-        this.config =
-            cloneConfig(config);
+        this.config = cloneConfig(config);
 
-        this.bounds =
-            createBounds(config);
+        this.bounds = createBounds(config);
+
+        this.chunks = new ChunkManager(new WorldGenerator(DEFAULT_WORLD_SEED));
     }
 
-    getChunk(
-        chunkX: number,
-        chunkY: number,
-    ): Chunk | undefined {
-        assertChunkCoordinate(
-            chunkX,
-            chunkY,
-        );
+    getChunk(chunkX: number, chunkY: number) {
+        assertChunkCoordinate(chunkX, chunkY);
 
-        if (
-            !this.isChunkInBounds(
-                chunkX,
-                chunkY,
-            )
-        ) {
+        if (!this.isChunkInBounds(chunkX, chunkY)) {
             return undefined;
         }
 
-        return this.chunks
-            .get(chunkX)
-            ?.get(chunkY);
+        return this.chunks.get(chunkX, chunkY);
     }
 
-    getOrCreateChunk(
-        chunkX: number,
-        chunkY: number,
-    ): Chunk {
-        assertChunkCoordinate(
-            chunkX,
-            chunkY,
-        );
+    prepareChunkRange(visibleRange: ChunkRange): void {
+        const loadRange = this.clampChunkRange(expandChunkRange(visibleRange, LOAD_PADDING_CHUNKS));
 
-        if (
-            !this.isChunkInBounds(
-                chunkX,
-                chunkY,
-            )
-        ) {
-            throw new RangeError(
-                `Chunk (${chunkX}, ${chunkY}) is outside the world`,
-            );
+        if (loadRange === null) {
+            return;
         }
 
-        let column =
-            this.chunks.get(chunkX);
-
-        if (column === undefined) {
-            column =
-                new Map<number, Chunk>();
-
-            this.chunks.set(
-                chunkX,
-                column,
-            );
+        for (let chunkY = loadRange.minY; chunkY <= loadRange.maxY; chunkY++) {
+            for (let chunkX = loadRange.minX; chunkX <= loadRange.maxX; chunkX++) {
+                this.chunks.getOrCreate(chunkX, chunkY);
+            }
         }
 
-        let chunk =
-            column.get(chunkY);
+        const unloadRange = this.clampChunkRange(
+            expandChunkRange(visibleRange, UNLOAD_PADDING_CHUNKS),
+        );
 
-        if (chunk === undefined) {
-            chunk =
-                new Chunk(
-                    chunkX,
-                    chunkY,
-                );
-
-            column.set(
-                chunkY,
-                chunk,
-            );
+        if (unloadRange !== null) {
+            this.chunks.unloadOutside(unloadRange);
         }
-
-        return chunk;
     }
 
-    getChunkAtWorld(
-        worldX: number,
-        worldY: number,
-    ): Chunk | undefined {
-        return this.getChunk(
-            this.worldToChunkX(worldX),
-            this.worldToChunkY(worldY),
-        );
+    worldToChunkX(worldX: number): number {
+        return Math.floor(worldX / CHUNK_SIZE_WORLD);
     }
 
-    getOrCreateChunkAtWorld(
-        worldX: number,
-        worldY: number,
-    ): Chunk {
-        return this.getOrCreateChunk(
-            this.worldToChunkX(worldX),
-            this.worldToChunkY(worldY),
-        );
+    worldToChunkY(worldY: number): number {
+        return Math.floor(worldY / CHUNK_SIZE_WORLD);
     }
 
-    worldToChunkX(
-        worldX: number,
-    ): number {
-        return Math.floor(
-            worldX /
-            CHUNK_SIZE_WORLD,
-        );
-    }
-
-    worldToChunkY(
-        worldY: number,
-    ): number {
-        return Math.floor(
-            worldY /
-            CHUNK_SIZE_WORLD,
-        );
-    }
-
-    isChunkInBounds(
-        chunkX: number,
-        chunkY: number,
-    ): boolean {
-        const bounds =
-            this.bounds;
+    isChunkInBounds(chunkX: number, chunkY: number): boolean {
+        const bounds = this.bounds;
 
         if (bounds === null) {
             return true;
         }
 
         return (
-            chunkX >=
-            bounds.minChunkX &&
-            chunkX <
-            bounds.maxChunkXExclusive &&
-            chunkY >=
-            bounds.minChunkY &&
-            chunkY <
-            bounds.maxChunkYExclusive
+            chunkX >= bounds.minChunkX &&
+            chunkX < bounds.maxChunkXExclusive &&
+            chunkY >= bounds.minChunkY &&
+            chunkY < bounds.maxChunkYExclusive
         );
     }
 
-    containsWorldPoint(
-        x: number,
-        y: number,
-    ): boolean {
-        const bounds =
-            this.bounds;
+    containsWorldPoint(x: number, y: number): boolean {
+        const bounds = this.bounds;
 
         if (bounds === null) {
             return true;
         }
 
-        return (
-            x >= bounds.left &&
-            x < bounds.right &&
-            y >= bounds.top &&
-            y < bounds.bottom
-        );
+        return x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom;
     }
 
     getChunkRangeForWorldRect(
@@ -200,60 +104,28 @@ export class WorldMap {
         right: number,
         bottom: number,
     ): ChunkRange | null {
-        const bounds =
-            this.bounds;
+        if (this.bounds !== null) {
+            left = Math.max(left, this.bounds.left);
 
-        if (bounds !== null) {
-            left = Math.max(
-                left,
-                bounds.left,
-            );
+            top = Math.max(top, this.bounds.top);
 
-            top = Math.max(
-                top,
-                bounds.top,
-            );
+            right = Math.min(right, this.bounds.right);
 
-            right = Math.min(
-                right,
-                bounds.right,
-            );
-
-            bottom = Math.min(
-                bottom,
-                bounds.bottom,
-            );
+            bottom = Math.min(bottom, this.bounds.bottom);
         }
 
-        if (
-            right <= left ||
-            bottom <= top
-        ) {
+        if (right <= left || bottom <= top) {
             return null;
         }
 
         return {
-            minX: Math.floor(
-                left /
-                CHUNK_SIZE_WORLD,
-            ),
+            minX: Math.floor(left / CHUNK_SIZE_WORLD),
 
-            minY: Math.floor(
-                top /
-                CHUNK_SIZE_WORLD,
-            ),
+            minY: Math.floor(top / CHUNK_SIZE_WORLD),
 
-            maxX:
-                Math.ceil(
-                    right /
-                    CHUNK_SIZE_WORLD,
-                ) - 1,
+            maxX: Math.ceil(right / CHUNK_SIZE_WORLD) - 1,
 
-            maxY:
-                Math.ceil(
-                    bottom /
-                    CHUNK_SIZE_WORLD,
-                ) - 1,
+            maxY: Math.ceil(bottom / CHUNK_SIZE_WORLD) - 1,
         };
     }
 
@@ -261,10 +133,7 @@ export class WorldMap {
         x: number;
         y: number;
     } {
-        const bounds =
-            this.bounds;
-
-        if (bounds === null) {
+        if (this.bounds === null) {
             return {
                 x: 0,
                 y: 0,
@@ -272,51 +141,66 @@ export class WorldMap {
         }
 
         return {
-            x:
-                (bounds.left +
-                    bounds.right) *
-                0.5,
+            x: (this.bounds.left + this.bounds.right) * 0.5,
 
-            y:
-                (bounds.top +
-                    bounds.bottom) *
-                0.5,
+            y: (this.bounds.top + this.bounds.bottom) * 0.5,
+        };
+    }
+
+    private clampChunkRange(range: ChunkRange): ChunkRange | null {
+        if (this.bounds === null) {
+            return range;
+        }
+
+        const minX = Math.max(range.minX, this.bounds.minChunkX);
+
+        const minY = Math.max(range.minY, this.bounds.minChunkY);
+
+        const maxX = Math.min(range.maxX, this.bounds.maxChunkXExclusive - 1);
+
+        const maxY = Math.min(range.maxY, this.bounds.maxChunkYExclusive - 1);
+
+        if (minX > maxX || minY > maxY) {
+            return null;
+        }
+
+        return {
+            minX,
+            minY,
+            maxX,
+            maxY,
         };
     }
 }
 
-function createBounds(
-    config: WorldMapConfig,
-): WorldMapBounds | null {
+function expandChunkRange(range: ChunkRange, amount: number): ChunkRange {
+    return {
+        minX: range.minX - amount,
+
+        minY: range.minY - amount,
+
+        maxX: range.maxX + amount,
+
+        maxY: range.maxY + amount,
+    };
+}
+
+function createBounds(config: WorldMapConfig): WorldMapBounds | null {
     if (config.type === 'infinite') {
         return null;
     }
 
-    const widthChunks =
-        config.widthTiles /
-        CHUNK_SIZE_TILES;
+    const widthChunks = config.widthTiles / CHUNK_SIZE_TILES;
 
-    const heightChunks =
-        config.heightTiles /
-        CHUNK_SIZE_TILES;
+    const heightChunks = config.heightTiles / CHUNK_SIZE_TILES;
 
-    const minChunkX =
-        -Math.floor(
-            widthChunks / 2,
-        );
+    const minChunkX = -Math.floor(widthChunks / 2);
 
-    const minChunkY =
-        -Math.floor(
-            heightChunks / 2,
-        );
+    const minChunkY = -Math.floor(heightChunks / 2);
 
-    const maxChunkXExclusive =
-        minChunkX +
-        widthChunks;
+    const maxChunkXExclusive = minChunkX + widthChunks;
 
-    const maxChunkYExclusive =
-        minChunkY +
-        heightChunks;
+    const maxChunkYExclusive = minChunkY + heightChunks;
 
     return {
         minChunkX,
@@ -325,27 +209,17 @@ function createBounds(
         maxChunkXExclusive,
         maxChunkYExclusive,
 
-        left:
-            minChunkX *
-            CHUNK_SIZE_WORLD,
+        left: minChunkX * CHUNK_SIZE_WORLD,
 
-        top:
-            minChunkY *
-            CHUNK_SIZE_WORLD,
+        top: minChunkY * CHUNK_SIZE_WORLD,
 
-        right:
-            maxChunkXExclusive *
-            CHUNK_SIZE_WORLD,
+        right: maxChunkXExclusive * CHUNK_SIZE_WORLD,
 
-        bottom:
-            maxChunkYExclusive *
-            CHUNK_SIZE_WORLD,
+        bottom: maxChunkYExclusive * CHUNK_SIZE_WORLD,
     };
 }
 
-function cloneConfig(
-    config: WorldMapConfig,
-): WorldMapConfig {
+function cloneConfig(config: WorldMapConfig): WorldMapConfig {
     if (config.type === 'infinite') {
         return {
             type: 'infinite',
@@ -355,24 +229,14 @@ function cloneConfig(
     return {
         type: 'bounded',
 
-        widthTiles:
-            config.widthTiles,
+        widthTiles: config.widthTiles,
 
-        heightTiles:
-            config.heightTiles,
+        heightTiles: config.heightTiles,
     };
 }
 
-function assertChunkCoordinate(
-    x: number,
-    y: number,
-): void {
-    if (
-        !Number.isSafeInteger(x) ||
-        !Number.isSafeInteger(y)
-    ) {
-        throw new RangeError(
-            'Chunk coordinates must be safe integers',
-        );
+function assertChunkCoordinate(x: number, y: number): void {
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) {
+        throw new RangeError('Chunk coordinates must be safe integers');
     }
 }

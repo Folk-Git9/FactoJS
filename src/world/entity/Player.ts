@@ -11,10 +11,7 @@ export class Player {
     readonly radius = 12;
     readonly movementSpeed = 192;
 
-    constructor(
-        x = 0,
-        y = 0,
-    ) {
+    constructor(x = 0, y = 0) {
         this.x = x;
         this.y = y;
 
@@ -26,7 +23,6 @@ export class Player {
         this.previousX = this.x;
         this.previousY = this.y;
 
-        this.previousRotation =
-            this.rotation;
+        this.previousRotation = this.rotation;
     }
 }

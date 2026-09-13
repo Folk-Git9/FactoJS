@@ -37,10 +37,7 @@ async function initialize(): Promise<void> {
 
     appElement.appendChild(app.canvas);
 
-    const game = new FactoJS(
-        app,
-        WORLD_MAP_CONFIG,
-    );
+    const game = new FactoJS(app, WORLD_MAP_CONFIG);
 
     game.start();
 

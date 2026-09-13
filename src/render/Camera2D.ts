@@ -27,10 +27,7 @@ export class Camera2D {
         return this._zoom;
     }
 
-    setPosition(
-        x: number,
-        y: number,
-    ): void {
+    setPosition(x: number, y: number): void {
         this._x = x;
         this._y = y;
     }
@@ -40,42 +37,24 @@ export class Camera2D {
             return;
         }
 
-        const factor = Math.exp(
-            -delta * ZOOM_SENSITIVITY,
-        );
+        const factor = Math.exp(-delta * ZOOM_SENSITIVITY);
 
-        this.targetZoom = clamp(
-            this.targetZoom * factor,
-            MIN_ZOOM,
-            MAX_ZOOM,
-        );
+        this.targetZoom = clamp(this.targetZoom * factor, MIN_ZOOM, MAX_ZOOM);
     }
 
     update(deltaSeconds: number): void {
-        const interpolation =
-            1 -
-            Math.exp(
-                -ZOOM_SMOOTHNESS * deltaSeconds,
-            );
+        const interpolation = 1 - Math.exp(-ZOOM_SMOOTHNESS * deltaSeconds);
 
-        this._zoom +=
-            (this.targetZoom - this._zoom) *
-            interpolation;
+        this._zoom += (this.targetZoom - this._zoom) * interpolation;
     }
 
-    apply(
-        container: Container,
-        viewportWidth: number,
-        viewportHeight: number,
-    ): void {
+    apply(container: Container, viewportWidth: number, viewportHeight: number): void {
         container.scale.set(this._zoom);
 
         container.position.set(
-            viewportWidth * 0.5 -
-            this._x * this._zoom,
+            viewportWidth * 0.5 - this._x * this._zoom,
 
-            viewportHeight * 0.5 -
-            this._y * this._zoom,
+            viewportHeight * 0.5 - this._y * this._zoom,
         );
     }
 
@@ -86,16 +65,9 @@ export class Camera2D {
         viewportHeight: number,
     ): Pos {
         return {
-            x:
-                this._x +
-                (screenX - viewportWidth * 0.5) /
-                this._zoom,
+            x: this._x + (screenX - viewportWidth * 0.5) / this._zoom,
 
-            y:
-                this._y +
-                (screenY - viewportHeight * 0.5) /
-                this._zoom,
+            y: this._y + (screenY - viewportHeight * 0.5) / this._zoom,
         };
     }
 }
-

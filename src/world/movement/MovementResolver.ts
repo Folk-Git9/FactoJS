@@ -6,9 +6,5 @@ export interface MovableCircle {
 }
 
 export interface MovementResolver {
-    moveCircle(
-        body: MovableCircle,
-        deltaX: number,
-        deltaY: number,
-    ): void;
+    moveCircle(body: MovableCircle, deltaX: number, deltaY: number): void;
 }
